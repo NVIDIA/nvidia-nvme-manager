@@ -54,9 +54,11 @@ static void handleMCTPEndpoints(
             continue;
         }
 
+        addr.push_back(0);
         std::shared_ptr<NVMeDevice> DrivePtr = std::make_shared<NVMeDevice>(
              io, objectServer, dbusConnection, eid, std::move(addr));
 
+        DrivePtr->initialize();
         DrivePtr->pollDevices();
 
     }

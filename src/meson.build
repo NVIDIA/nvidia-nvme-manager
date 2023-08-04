@@ -1,4 +1,4 @@
-nvme_srcs = files('NVMeDeviceMain.cpp', 'NVMeDevice.cpp', 'NVMeMI.cpp')
+nvme_srcs = files('NVMeDeviceMain.cpp', 'NVMeDevice.cpp', 'NVMeMi.cpp')
 
 nvme_deps = [ default_deps, threads ]
 

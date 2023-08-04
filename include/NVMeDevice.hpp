@@ -9,16 +9,18 @@
 #include <xyz/openbmc_project/Inventory/Decorator/Asset/server.hpp>
 #include <xyz/openbmc_project/Inventory/Item/Drive/server.hpp>
 #include <xyz/openbmc_project/Inventory/Item/server.hpp>
+#include <xyz/openbmc_project/Nvme/Status/server.hpp>
 #include <xyz/openbmc_project/State/Decorator/OperationalStatus/server.hpp>
 
-#include <NVMeMI.hpp>
+#include <NVMeMi.hpp>
 
-using StatusInterface = sdbusplus::server::object::object<
+using NvmeInterfaces = sdbusplus::server::object::object<
     sdbusplus::xyz::openbmc_project::Inventory::server::Item,
     sdbusplus::xyz::openbmc_project::State::Decorator::server::
         OperationalStatus,
     sdbusplus::xyz::openbmc_project::Inventory::Decorator::server::Asset,
     sdbusplus::xyz::openbmc_project::Software::server::Version,
+    sdbusplus::xyz::openbmc_project::Nvme::server::Status,
     sdbusplus::xyz::openbmc_project::Association::server::Definitions>;
 
 using DriveInterface =
@@ -33,7 +35,7 @@ namespace fs = std::filesystem;
 // using NVMEMap = boost::container::flat_map<unit8_t,
 // std::shared_ptr<NVMeDevice>>;
 class NVMeDevice :
-    public StatusInterface,
+    public NvmeInterfaces,
     public std::enable_shared_from_this<NVMeDevice>
 {
   public:
@@ -48,18 +50,24 @@ class NVMeDevice :
 
     NVMeDevice& operator=(const NVMeDevice& other) = delete;
 
+    void initialize();
     void pollDevices(void);
+    void markFunctional(bool functional);
 
     std::string stripString(char *src, size_t len);
-    std::shared_ptr<NVMeMI> getNVMeCtx()
+    std::string getManufacture(uint16_t vid);
+
+    std::shared_ptr<NVMeMiIntf> getIntf()
     {
-        return nvmeCtx;
+        return intf;
     }
   private:
     std::shared_ptr<sdbusplus::asio::dbus_interface> driveInterface;
     sdbusplus::asio::object_server& objServer;
     boost::asio::deadline_timer scanTimer;
 
-    std::shared_ptr<NVMeMI> nvmeCtx;
+    bool driveFunctional;
+    NVMeIntf nvmeIntf;
+    std::shared_ptr<NVMeMiIntf> intf;
 
 };
