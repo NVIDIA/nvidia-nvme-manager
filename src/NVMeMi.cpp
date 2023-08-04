@@ -32,33 +32,7 @@ NVMeMi::NVMeMi(boost::asio::io_context& io,
     {
         throw std::runtime_error("invalid NVMe root");
     }
-    /*
-    if (singleThreadMode)
-    {
-
-        auto root = deriveRootBus(bus);
-
-        if (!root || *root < 0)
-        {
-            throw std::runtime_error("invalid root bus number");
-        }
-        auto res = workerMap.find(*root);
-
-        if (res == workerMap.end() || res->second.expired())
-        {
-            worker = std::make_shared<Worker>();
-            workerMap[*root] = worker;
-        }
-        else
-        {
-            worker = res->second.lock();
-        }
-    }
-    else
-    {
-    */
-        worker = std::make_shared<Worker>();
-    //}
+    worker = std::make_shared<Worker>();
 
     nvmeEP = nvme_mi_open_mctp(nvmeRoot,(char *) sockName.data(), eid);
     if (nvmeEP == nullptr)
@@ -73,25 +47,6 @@ NVMeMi::NVMeMi(boost::asio::io_context& io,
                   << std::to_string(nid) + ":" + std::to_string(eid)
                   << std::endl;
     }
-    // setup the power state
-   // if (readState == PowerState::on || readState == PowerState::biosPost ||
-   //     readState == PowerState::chassisOn)
-   // {
-   //     // life time of the callback is binding to the NVMeMi instance, so only
-   //     // this capture is required.
-   //     powerCallback = setupPowerMatchCallback(conn, [this](PowerState, bool) {
-   //         if (::readingStateGood(this->readState))
-   //         {
-   //            initMCTP();
-   //         }
-   //         else
-   //         {
-   //             closeMCTP();
-   //         }
-   //     });
-   // }
-
-    // TODO: check the powerstate.
 }
 
 NVMeMi::Worker::Worker()
