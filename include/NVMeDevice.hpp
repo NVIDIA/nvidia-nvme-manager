@@ -69,4 +69,5 @@ class NVMeDevice :
     NVMeIntf nvmeIntf;
     std::shared_ptr<NVMeMiIntf> intf;
 
+    nvme_mi_ctrl_t ctrl;
 };

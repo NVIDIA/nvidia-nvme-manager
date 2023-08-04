@@ -1,8 +1,22 @@
 #include <NVMeDevice.hpp>
 #include <nvme-mi_config.h>
 
+#include <boost/multiprecision/cpp_int.hpp>
+
 #include <iostream>
 #include <filesystem>
+
+template <typename T>
+T *toResponse(std::span<uint8_t> &data) 
+{
+    std::vector<uint8_t> tmp;
+
+    for (auto d : data) {
+        tmp.push_back(d);
+    }
+    T *resp = reinterpret_cast<T *>(tmp.data());
+    return resp;
+}
 
 NVMeDevice::NVMeDevice(
     boost::asio::io_service& io,
@@ -61,6 +75,13 @@ void NVMeDevice::initialize()
 {
     sdbusplus::xyz::openbmc_project::Inventory::server::Item::present(true);
 
+    sdbusplus::xyz::openbmc_project::Inventory::Item::server::Drive::type(
+        sdbusplus::xyz::openbmc_project::Inventory::Item::server::Drive::
+            DriveType::SSD);
+    sdbusplus::xyz::openbmc_project::Inventory::Item::server::Drive::protocol(
+        sdbusplus::xyz::openbmc_project::Inventory::Item::server::Drive::
+            DriveProtocol::NVMe);
+
     intf->miScanCtrl([self{shared_from_this()}](
                          const std::error_code& ec,
                          const std::vector<nvme_mi_ctrl_t>& ctrlList) mutable {
@@ -71,33 +92,37 @@ void NVMeDevice::initialize()
             return;
         }
 
-        auto ctrl = ctrlList.back();
+        self->ctrl = ctrlList.back();
         self->getIntf()->adminIdentify(
-            ctrl, nvme_identify_cns::NVME_IDENTIFY_CNS_CTRL, NVME_NSID_NONE, 0,
-            [self{self->shared_from_this()}](const std::error_code& ec,
+            self->ctrl, nvme_identify_cns::NVME_IDENTIFY_CNS_CTRL,
+            NVME_NSID_NONE, 0,
+            [self{self->shared_from_this()}](const std::error_code &ec,
                                              std::span<uint8_t> data) {
-                if (ec)
-                {
-                    std::cerr << "fail to do Identify command" << std::endl;
-                    return;
-                }
-                char resp[sizeof(nvme_id_ctrl)];
-                int i = 0;
-                for (auto d: data)
-                {
-                    resp[i++] = d;
-                }
-                nvme_id_ctrl* id = reinterpret_cast<nvme_id_ctrl *> (resp);
+              if (ec) {
+                std::cerr << "fail to do Identify command" << std::endl;
+                return;
+              }
 
-                self->sdbusplus::xyz::openbmc_project::Inventory::
-                        Decorator::server::Asset::manufacturer(self->getManufacture(id->vid));
-                self->sdbusplus::xyz::openbmc_project::Inventory::Decorator::
-                    server::Asset::serialNumber(
-                        self->stripString(id->sn, sizeof(id->sn)));
+              auto id = toResponse<nvme_id_ctrl>(data);
 
-                self->sdbusplus::xyz::openbmc_project::Inventory::Decorator::
-                    server::Asset::model(
-                        self->stripString(id->mn, sizeof(id->mn)));
+              self->sdbusplus::xyz::openbmc_project::Inventory::Decorator::
+                  server::Asset::manufacturer(self->getManufacture(id->vid));
+              self->sdbusplus::xyz::openbmc_project::Inventory::Decorator::
+                  server::Asset::serialNumber(
+                      self->stripString(id->sn, sizeof(id->sn)));
+
+              self->sdbusplus::xyz::openbmc_project::Inventory::Decorator::
+                  server::Asset::model(
+                      self->stripString(id->mn, sizeof(id->mn)));
+
+              uint64_t drive_capacity[2];
+              memcpy(&drive_capacity, id->tnvmcap, 16);
+
+              /* 8 bytes presenting the drive capacity is enough to support all
+               * drives outside market.
+               */
+              self->sdbusplus::xyz::openbmc_project::Inventory::Item::server::
+                  Drive::capacity(drive_capacity[0]);
             });
     });
 }
@@ -139,24 +164,65 @@ void NVMeDevice::pollDevices()
             return;
         }
 
-        self->getIntf()->miSubsystemHealthStatusPoll(
-            [self](__attribute__((unused))
-                                       const std::error_code& err,
-                                       nvme_mi_nvm_ss_health_status* ss) {
+        auto miIntf = self->getIntf();
+        miIntf->miSubsystemHealthStatusPoll(
+            [self](__attribute__((unused)) const std::error_code &err,
+                   nvme_mi_nvm_ss_health_status *ss) {
+              self->sdbusplus::xyz::openbmc_project::Nvme::server::Status::
+                  driveLifeUsed(std::to_string(ss->pdlu));
+              self->sdbusplus::xyz::openbmc_project::Nvme::server::Status::
+                  smartWarnings(std::to_string(ss->sw));
 
-                self->sdbusplus::xyz::openbmc_project::Nvme::server::Status::driveLifeUsed(std::to_string(ss->pdlu));
+              // the percentage is allowed to exceed 100 based on the spec.
+              auto percentage = (ss->pdlu > 100) ? 100 : ss->pdlu;
+              self->sdbusplus::xyz::openbmc_project::Inventory::Item::server::
+                  Drive::predictedMediaLifeLeftPercent(100 - percentage);
 
+              // drive failure
+              if (ss->nss & 0x20) {
+                self->markFunctional(false);
+              }
 
-                //drive failure
-                if (ss->nss & 0x20)
-                {
-                    self->markFunctional(false);
-                }
-                printf("NVMe MI subsys health:\n");
-                printf(" smart warnings:    0x%x\n", ss->sw);
-                printf(" composite temp:    %d\n", ss->ctemp);
-                printf(" drive life used:   %d%%\n", ss->pdlu);
-                printf(" controller status: 0x%04x\n", ss->ccs);
+              printf(" NVM subsystem status : 0x%04x\n", ss->nss);
+              printf(" NVM composite temp. : 0x%04x\n", ss->ctemp);
+              printf(" controller status: 0x%04x\n", ss->ccs);
+            });
+
+        miIntf->adminGetLogPage(
+            self->ctrl, NVME_LOG_LID_SMART, 0xFFFFFFFF, 0, 0,
+            [self](const std::error_code &ec, std::span<uint8_t> smart) {
+              if (ec) {
+                std::cerr << "fail to query SMART for the nvme subsystem"
+                          << (ec ? ": " + ec.message() : "") << std::endl;
+                return;
+              }
+
+              auto log = toResponse<nvme_smart_log>(smart);
+
+              // the error indicator is from smart warning
+              if (log->critical_warning & 0x10) {
+                self->sdbusplus::xyz::openbmc_project::Nvme::server::Status::
+                    backupDeviceFault(true);
+              }
+              if (log->critical_warning & 0x01) {
+                self->sdbusplus::xyz::openbmc_project::Nvme::server::Status::
+                    capacityFault(true);
+              }
+              if (log->critical_warning & 0x02) {
+                self->sdbusplus::xyz::openbmc_project::Nvme::server::Status::
+                    temperatureFault(true);
+              }
+              if (log->critical_warning & 0x04) {
+                self->sdbusplus::xyz::openbmc_project::Nvme::server::Status::
+                    degradesFault(true);
+              }
+              if (log->critical_warning & 0x08) {
+                self->sdbusplus::xyz::openbmc_project::Nvme::server::Status::
+                    mediaFault(true);
+              }
+              boost::multiprecision::uint128_t powerOnHours;
+              memcpy((void *)&powerOnHours,log->power_on_hours,16);
+              std::cout << powerOnHours<<std::endl;
             });
 
         self->pollDevices();
