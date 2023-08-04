@@ -1,0 +1,9 @@
+#pragma once
+
+#include <cstdint>
+
+// clang-format off
+constexpr const int validateUnsecureFeature = @VALIDATION_UNSECURE_FEATURE@;
+
+constexpr const int insecureDriveOverride = @INSECURE_UNRESTRICTED_Drive_OVERRIDE@;
+// clang-format on
