@@ -56,7 +56,7 @@ static void handleMCTPEndpoints(
 
         addr.push_back(0);
         std::shared_ptr<NVMeDevice> DrivePtr = std::make_shared<NVMeDevice>(
-             io, objectServer, dbusConnection, eid, std::move(addr));
+             io, objectServer, dbusConnection, eid, std::move(addr), std::string("/xyz/openbmc_project/inventory/drive/1"));
 
         DrivePtr->initialize();
         DrivePtr->pollDevices();

@@ -11,20 +11,19 @@
 #include <xyz/openbmc_project/Inventory/Item/server.hpp>
 #include <xyz/openbmc_project/Nvme/Status/server.hpp>
 #include <xyz/openbmc_project/State/Decorator/OperationalStatus/server.hpp>
-
+#include <xyz/openbmc_project/Inventory/Item/StorageController/server.hpp>
 #include <NVMeMi.hpp>
 
 using NvmeInterfaces = sdbusplus::server::object::object<
     sdbusplus::xyz::openbmc_project::Inventory::server::Item,
+    sdbusplus::xyz::openbmc_project::Inventory::Item::server::StorageController,
+    sdbusplus::xyz::openbmc_project::Inventory::Item::server::Drive,
     sdbusplus::xyz::openbmc_project::State::Decorator::server::
         OperationalStatus,
     sdbusplus::xyz::openbmc_project::Inventory::Decorator::server::Asset,
     sdbusplus::xyz::openbmc_project::Software::server::Version,
     sdbusplus::xyz::openbmc_project::Nvme::server::Status,
     sdbusplus::xyz::openbmc_project::Association::server::Definitions>;
-
-using DriveInterface =
-    sdbusplus::xyz::openbmc_project::Inventory::Item::server::Drive;
 
 using AssociationList =
     std::vector<std::tuple<std::string, std::string, std::string>>;
@@ -45,7 +44,7 @@ class NVMeDevice :
     NVMeDevice(boost::asio::io_service& io,
                sdbusplus::asio::object_server& objectServer,
                std::shared_ptr<sdbusplus::asio::connection>& dbusConnection,
-               uint8_t, std::vector<uint8_t>);
+               uint8_t, std::vector<uint8_t>, std::string path);
     ~NVMeDevice();
 
     NVMeDevice& operator=(const NVMeDevice& other) = delete;

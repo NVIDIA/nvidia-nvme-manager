@@ -1,43 +1,32 @@
 #include <NVMeDevice.hpp>
+#include <nvme-mi_config.h>
 
 #include <iostream>
+#include <filesystem>
 
 NVMeDevice::NVMeDevice(
     boost::asio::io_service& io,
     sdbusplus::asio::object_server& objectServer,
     std::shared_ptr<sdbusplus::asio::connection>& conn,
-    uint8_t eid, std::vector<uint8_t> addr) :
+    uint8_t eid, std::vector<uint8_t> addr, std::string path) :
     NvmeInterfaces(
         static_cast<sdbusplus::bus::bus&>(*conn),
-        "/xyz/openbmc_project/drive/1",
+        path.c_str(),
         NvmeInterfaces::action::defer_emit),std::enable_shared_from_this<NVMeDevice>(),
     objServer(objectServer), scanTimer(io)
 {
+    std::filesystem::path p(path);
     
-    
-    /*
-    driveInterface = objectServer.add_interface(
-        "/xyz/openbmc_project/drive/1",
-        DriveInterface::interface);
 
-    
-    std::filesystem::path p("/xyz/openbmc_project/drive/1");
     AssociationList assocs = {};
-    assocs.emplace_back(
-        std::make_tuple("chassis", "all_sensors", p.parent_path().string()));
+
+    assocs.emplace_back("chassis", "drive", driveLocation);
     sdbusplus::xyz::openbmc_project::Association::server::Definitions::
         associations(assocs);
-    driveInterface->register_property("test2", 1);
-    if (!driveInterface->initialize())
-    {
-        std::cerr << "error initializing interface\n";
-    }
-    */
 
     nvmeIntf = NVMeIntf::create<NVMeMi>(io, conn, addr, eid);
     intf = std::get<std::shared_ptr<NVMeMiIntf>>(nvmeIntf.getInferface());
 
-    sdbusplus::xyz::openbmc_project::Inventory::server::Item::present(true);
 }
     
 std::string NVMeDevice::stripString(char *src, size_t len)
@@ -70,6 +59,8 @@ std::string NVMeDevice::getManufacture(uint16_t vid)
 
 void NVMeDevice::initialize()
 {
+    sdbusplus::xyz::openbmc_project::Inventory::server::Item::present(true);
+
     intf->miScanCtrl([self{shared_from_this()}](
                          const std::error_code& ec,
                          const std::vector<nvme_mi_ctrl_t>& ctrlList) mutable {
@@ -93,7 +84,9 @@ void NVMeDevice::initialize()
                 char resp[sizeof(nvme_id_ctrl)];
                 int i = 0;
                 for (auto d: data)
+                {
                     resp[i++] = d;
+                }
                 nvme_id_ctrl* id = reinterpret_cast<nvme_id_ctrl *> (resp);
 
                 self->sdbusplus::xyz::openbmc_project::Inventory::
@@ -112,12 +105,21 @@ void NVMeDevice::initialize()
 void NVMeDevice::markFunctional(bool functional)
 {
     driveFunctional = functional;
+    // mark device state
     if (!functional)
     {
+        sdbusplus::xyz::openbmc_project::State::Decorator::server::OperationalStatus::functional(false);
         sdbusplus::xyz::openbmc_project::State::Decorator::server::
             OperationalStatus::state(
                 sdbusplus::xyz::openbmc_project::State::Decorator::server::
                     OperationalStatus::StateType::Fault);
+    }
+    else {
+        sdbusplus::xyz::openbmc_project::State::Decorator::server::OperationalStatus::functional(true);
+        sdbusplus::xyz::openbmc_project::State::Decorator::server::
+            OperationalStatus::state(
+                sdbusplus::xyz::openbmc_project::State::Decorator::server::
+                    OperationalStatus::StateType::None);
     }
 }
 
@@ -148,7 +150,7 @@ void NVMeDevice::pollDevices()
                 //drive failure
                 if (ss->nss & 0x20)
                 {
-
+                    self->markFunctional(false);
                 }
                 printf("NVMe MI subsys health:\n");
                 printf(" smart warnings:    0x%x\n", ss->sw);
@@ -156,12 +158,6 @@ void NVMeDevice::pollDevices()
                 printf(" drive life used:   %d%%\n", ss->pdlu);
                 printf(" controller status: 0x%04x\n", ss->ccs);
             });
-        /*
-        sdbusplus::xyz::openbmc_project::State::Decorator::server::
-            OperationalStatus::state(
-                sdbusplus::xyz::openbmc_project::State::Decorator::server::
-                    OperationalStatus::StateType::Fault);
-                    */
 
         self->pollDevices();
     });
@@ -170,5 +166,4 @@ void NVMeDevice::pollDevices()
 NVMeDevice::~NVMeDevice()
 {
     std::cout <<"~NVMEDevice"<<std::endl;
-    //objServer.remove_interface(driveInterface);
 }
