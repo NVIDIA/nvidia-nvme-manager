@@ -25,15 +25,7 @@ NVMeMi::NVMeMi(boost::asio::io_context& io,
     nid = -1;
     eid = 0;
     mctpPath.erase();
-    nvmeEP = nullptr; 
-    /*
-    for (auto v:sockName) {
-        std::cout << " "<<v;
-
-    }*/
-       // std::cout << "s1:"<<sockName.size()<<std::endl;
-
-    addr = std::string((char *)&sockName.data()[1]);
+    nvmeEP = nullptr;
 
     // set update the worker thread
     if (!nvmeRoot)
@@ -68,7 +60,7 @@ NVMeMi::NVMeMi(boost::asio::io_context& io,
         worker = std::make_shared<Worker>();
     //}
 
-    nvmeEP = nvme_mi_open_mctp(nvmeRoot,(char *) addr.c_str(), eid);
+    nvmeEP = nvme_mi_open_mctp(nvmeRoot,(char *) sockName.data(), eid);
     if (nvmeEP == nullptr)
     {
         nid = -1;
