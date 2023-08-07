@@ -91,7 +91,7 @@ static void interfaceRemoved(sdbusplus::message::message& message)
 {
     if (message.is_method_error())
     {
-        std::cerr << "interfacesRemoved callback method error\n";
+        lg2::error("interfacesRemoved callback method error");
         return;
     }
 

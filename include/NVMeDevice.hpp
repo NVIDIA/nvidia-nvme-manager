@@ -1,9 +1,10 @@
 #pragma once
-
 #include <boost/asio/io_service.hpp>
 #include <boost/asio/deadline_timer.hpp>
 #include <sdbusplus/asio/object_server.hpp>
 
+#include <phosphor-logging/elog-errors.hpp>
+#include <phosphor-logging/lg2.hpp>
 #include <xyz/openbmc_project/Association/Definitions/server.hpp>
 #include <xyz/openbmc_project/Software/Version/server.hpp>
 #include <xyz/openbmc_project/Inventory/Decorator/Asset/server.hpp>

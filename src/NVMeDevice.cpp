@@ -87,8 +87,7 @@ void NVMeDevice::initialize()
                          const std::vector<nvme_mi_ctrl_t>& ctrlList) mutable {
         if (ec || ctrlList.size() == 0)
         {
-            std::cerr << "fail to scan controllers for the nvme subsystem"
-                      << (ec ? ": " + ec.message() : "") << std::endl;
+            lg2::error("fail to scan controllers for the nvme subsystem {ERR}: {MSG}", "ERR", ec.value(), "MSG", ec.message());
             return;
         }
 
@@ -99,7 +98,7 @@ void NVMeDevice::initialize()
             [self{self->shared_from_this()}](const std::error_code &ec,
                                              std::span<uint8_t> data) {
               if (ec) {
-                std::cerr << "fail to do Identify command" << std::endl;
+                lg2::error("fail to do Identify command");
                 return;
               }
 
@@ -160,7 +159,7 @@ void NVMeDevice::pollDevices()
         }
         else if (errorCode)
         {
-            std::cerr << "Error:" << errorCode.message() << "\n";
+            lg2::error("Error: {MSG}\n", "MSG", errorCode.message());
             return;
         }
 
@@ -183,17 +182,16 @@ void NVMeDevice::pollDevices()
                 self->markFunctional(false);
               }
 
-              printf(" NVM subsystem status : 0x%04x\n", ss->nss);
-              printf(" NVM composite temp. : 0x%04x\n", ss->ctemp);
-              printf(" controller status: 0x%04x\n", ss->ccs);
+              lg2::error(" NVM subsystem status : {VAL}", "VAL", ss->nss);
+              lg2::error(" NVM composite temp. : {VAL}", "VAL", ss->ctemp);
             });
 
         miIntf->adminGetLogPage(
             self->ctrl, NVME_LOG_LID_SMART, 0xFFFFFFFF, 0, 0,
             [self](const std::error_code &ec, std::span<uint8_t> smart) {
               if (ec) {
-                std::cerr << "fail to query SMART for the nvme subsystem"
-                          << (ec ? ": " + ec.message() : "") << std::endl;
+
+                lg2::error("fail to query SMART for the nvme subsystem {ERR}:{MSG}", "ERR", ec.value(), "MSG", ec.message());
                 return;
               }
 
@@ -222,7 +220,6 @@ void NVMeDevice::pollDevices()
               }
               boost::multiprecision::uint128_t powerOnHours;
               memcpy((void *)&powerOnHours,log->power_on_hours,16);
-              std::cout << powerOnHours<<std::endl;
             });
 
         self->pollDevices();

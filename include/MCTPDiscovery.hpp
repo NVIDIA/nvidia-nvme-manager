@@ -6,6 +6,7 @@
 #include <sdbusplus/asio/connection.hpp>
 #include <sdbusplus/asio/object_server.hpp>
 #include <sdbusplus/message/types.hpp>
+#include <phosphor-logging/lg2.hpp>
 
 #include <filesystem>
 #include <functional>
@@ -100,11 +101,10 @@ struct getMctpEpInfo :
                           data) {
                 if (ec)
                 {
-                    std::cerr << "Error getting " << path << ": retries left"
-                              << retries - 1 << "\n";
-                    if (!retries)
-                    {
-                        return;
+                  lg2::error("Error getting {PATH} : retries left {RETRY}",
+                             "PATH", path, "RETRY", retries - 1);
+                  if (!retries) {
+                    return;
                     }
                     auto timer = std::make_shared<boost::asio::steady_timer>(
                         self->dbusConnection->get_io_context());
@@ -113,7 +113,7 @@ struct getMctpEpInfo :
                                        retries](boost::system::error_code ec) {
                         if (ec)
                         {
-                            std::cerr << "Timer error!\n";
+                            lg2::error("Timer error");
                             return;
                         }
                         self->getPath(path, interface, owner, retries - 1);
@@ -141,7 +141,7 @@ struct getMctpEpInfo :
                                         const GetSubTreeType& ret) {
                 if (ec)
                 {
-                    std::cerr << "Error calling mapper\n";
+                    lg2::error("Error calling mapper");
                     if (!retries)
                     {
                         return;
@@ -153,7 +153,7 @@ struct getMctpEpInfo :
                                        retries](boost::system::error_code ec) {
                         if (ec)
                         {
-                            std::cerr << "Timer error!\n";
+                            lg2::error("Timer error");
                             return;
                         }
                         self->getConfiguration(interfaces, retries - 1);
