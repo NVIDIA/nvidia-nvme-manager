@@ -95,29 +95,37 @@ static void interfaceRemoved(sdbusplus::message::message& message)
         return;
     }
 
-    sdbusplus::message::object_path path;
-    std::vector<std::string> interfaces;
+    std::string objectName;
+    boost::container::flat_map<std::string, std::variant<size_t>> values;
+    message.read(objectName, values);
 
-    message.read(path, interfaces);
-    //free NVMe drive instances
-
- 
+    auto findEid = values.find("EID");
+    if (findEid != values.end())
+    {
+        auto obj = findEid->second;
+        auto eid = std::get<size_t>(obj);
+        lg2::info("Remove Drive:{EID}.", "EID", eid);
+        // remove the drive by Eid
+    }
 }
 
 int main()
 {
     boost::asio::io_service io;
-    auto systemBus = std::make_shared<sdbusplus::asio::connection>(io);
-    systemBus->request_name("xyz.openbmc_project.NVMeDevice");
-    sdbusplus::asio::object_server objectServer(systemBus, true);
+    auto bus = std::make_shared<sdbusplus::asio::connection>(io);
+    bus->request_name("xyz.openbmc_project.NVMeDevice");
+    sdbusplus::asio::object_server objectServer(bus, true);
     objectServer.add_manager("/xyz/openbmc_project/drive");
 
-    io.post([&]() { createDrives(io, objectServer, systemBus) ;std::cout <<"io post\n";});
+    std::vector<std::unique_ptr<sdbusplus::bus::match::match>> matches;
 
+    io.post([&]() { createDrives(io, objectServer, bus);});
+
+    // need to change
     boost::asio::deadline_timer filterTimer(io);
     std::function<void(sdbusplus::message::message&)> eventHandler =
         [&filterTimer, &io, &objectServer,
-         &systemBus](sdbusplus::message::message&) {
+         &bus](sdbusplus::message::message&) {
             // this implicitly cancels the timer
             filterTimer.expires_from_now(boost::posix_time::seconds(1));
 
@@ -133,27 +141,28 @@ int main()
                     return;
                 }
 
-                std::cout <<"filter timeer\n";
-                createDrives(io, objectServer, systemBus);
+                createDrives(io, objectServer, bus);
             });
         };
 
-    sdbusplus::bus::match::match configMatch(
-        static_cast<sdbusplus::bus::bus&>(*systemBus),
-        "type='signal',member='PropertiesChanged',path_namespace='" +
-            std::string(mctpEpsPath) + "',arg0namespace='" +
-            std::string(NVMeDevice::mctpEpInterface) + "'",
+    auto ifaceAddedMatch = std::make_unique<sdbusplus::bus::match::match>(
+        static_cast<sdbusplus::bus::bus&>(*bus),
+        "type='signal',member='InterfacesAdded',arg0path='" +
+            std::string(mctpEpsPath) + "/'",
         eventHandler);
+    matches.emplace_back(std::move(ifaceAddedMatch));
 
     // Watch for mctp service to remove configuration interfaces
     // so the corresponding Drives can be removed.
     auto ifaceRemovedMatch = std::make_unique<sdbusplus::bus::match::match>(
-        static_cast<sdbusplus::bus::bus&>(*systemBus),
+        static_cast<sdbusplus::bus::bus&>(*bus),
         "type='signal',member='InterfacesRemoved',arg0path='" +
             std::string(mctpEpsPath) + "/'",
-        [](sdbusplus::message::message& msg) {
+        [&filterTimer](sdbusplus::message::message& msg) {
+            filterTimer.cancel();
             interfaceRemoved(msg);
         });
+    matches.emplace_back(std::move(ifaceRemovedMatch));
 
     io.run();
 }
