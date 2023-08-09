@@ -51,7 +51,7 @@ class NVMeDevice :
     NVMeDevice& operator=(const NVMeDevice& other) = delete;
 
     void initialize();
-    void pollDevices(void);
+    void pollDrive(void);
     void markFunctional(bool functional);
 
     std::string stripString(char *src, size_t len);
@@ -71,4 +71,5 @@ class NVMeDevice :
     std::shared_ptr<NVMeMiIntf> intf;
 
     nvme_mi_ctrl_t ctrl;
+    bool presence;
 };

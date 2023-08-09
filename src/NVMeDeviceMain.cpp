@@ -59,7 +59,7 @@ static void handleMCTPEndpoints(
              io, objectServer, dbusConnection, eid, std::move(addr), std::string("/xyz/openbmc_project/inventory/drive/1"));
 
         DrivePtr->initialize();
-        DrivePtr->pollDevices();
+        DrivePtr->pollDrive();
 
     }
     /*

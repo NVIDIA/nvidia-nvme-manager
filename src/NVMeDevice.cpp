@@ -73,7 +73,7 @@ std::string NVMeDevice::getManufacture(uint16_t vid)
 
 void NVMeDevice::initialize()
 {
-    sdbusplus::xyz::openbmc_project::Inventory::server::Item::present(true);
+    presence = 0;
 
     sdbusplus::xyz::openbmc_project::Inventory::Item::server::Drive::type(
         sdbusplus::xyz::openbmc_project::Inventory::Item::server::Drive::
@@ -88,8 +88,12 @@ void NVMeDevice::initialize()
         if (ec || ctrlList.size() == 0)
         {
             lg2::error("fail to scan controllers for the nvme subsystem {ERR}: {MSG}", "ERR", ec.value(), "MSG", ec.message());
+            self->presence = false;
+            self->sdbusplus::xyz::openbmc_project::Inventory::server::Item::present(false);
             return;
         }
+        self->presence = true;
+        self->sdbusplus::xyz::openbmc_project::Inventory::server::Item::present(true);
 
         self->ctrl = ctrlList.back();
         self->getIntf()->adminIdentify(
@@ -147,7 +151,7 @@ void NVMeDevice::markFunctional(bool functional)
     }
 }
 
-void NVMeDevice::pollDevices()
+void NVMeDevice::pollDrive()
 {
 
     scanTimer.expires_from_now(boost::posix_time::seconds(5));
@@ -162,11 +166,23 @@ void NVMeDevice::pollDevices()
             lg2::error("Error: {MSG}\n", "MSG", errorCode.message());
             return;
         }
+        // try to re-initialize the drive
+        if (self->presence == false) {
+            self->initialize();
+            self->pollDrive();
+            return;
+        }
 
         auto miIntf = self->getIntf();
         miIntf->miSubsystemHealthStatusPoll(
             [self](__attribute__((unused)) const std::error_code &err,
                    nvme_mi_nvm_ss_health_status *ss) {
+              if (err) {
+                lg2::error("fail to query SubSystemHealthPoll for the nvme "
+                           "subsystem {ERR}:{MSG}",
+                           "ERR", err.value(), "MSG", err.message());
+                return;
+              }
               self->sdbusplus::xyz::openbmc_project::Nvme::server::Status::
                   driveLifeUsed(std::to_string(ss->pdlu));
               self->sdbusplus::xyz::openbmc_project::Nvme::server::Status::
@@ -222,7 +238,7 @@ void NVMeDevice::pollDevices()
               memcpy((void *)&powerOnHours,log->power_on_hours,16);
             });
 
-        self->pollDevices();
+        self->pollDrive();
     });
 }
 
