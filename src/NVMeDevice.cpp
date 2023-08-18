@@ -154,7 +154,7 @@ void NVMeDevice::markFunctional(bool functional)
 void NVMeDevice::pollDrive()
 {
 
-    scanTimer.expires_from_now(boost::posix_time::seconds(5));
+    scanTimer.expires_from_now(std::chrono::seconds(5));
     scanTimer.async_wait([self{shared_from_this()}](
                              const boost::system::error_code errorCode) {
         if (errorCode == boost::asio::error::operation_aborted)

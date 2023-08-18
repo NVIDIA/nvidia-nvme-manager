@@ -1,6 +1,6 @@
 #pragma once
 #include <boost/asio/io_service.hpp>
-#include <boost/asio/deadline_timer.hpp>
+#include <boost/asio/steady_timer.hpp>
 #include <sdbusplus/asio/object_server.hpp>
 
 #include <phosphor-logging/elog-errors.hpp>
@@ -64,7 +64,7 @@ class NVMeDevice :
   private:
     std::shared_ptr<sdbusplus::asio::dbus_interface> driveInterface;
     sdbusplus::asio::object_server& objServer;
-    boost::asio::deadline_timer scanTimer;
+    boost::asio::steady_timer scanTimer;
 
     bool driveFunctional;
     NVMeIntf nvmeIntf;
