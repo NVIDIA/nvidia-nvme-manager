@@ -13,6 +13,7 @@
 #include <xyz/openbmc_project/Nvme/Status/server.hpp>
 #include <xyz/openbmc_project/State/Decorator/OperationalStatus/server.hpp>
 #include <xyz/openbmc_project/Inventory/Item/StorageController/server.hpp>
+#include <xyz/openbmc_project/Software/Version/server.hpp>
 #include <NVMeMi.hpp>
 
 using NvmeInterfaces = sdbusplus::server::object::object<

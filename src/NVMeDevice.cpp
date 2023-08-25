@@ -118,6 +118,11 @@ void NVMeDevice::initialize()
                   server::Asset::model(
                       self->stripString(id->mn, sizeof(id->mn)));
 
+              std::string fr;
+              fr.assign(id->fr, id->fr + 8);
+              self->sdbusplus::xyz::openbmc_project::Software::server::Version::
+                  version(fr);
+
               uint64_t drive_capacity[2];
               memcpy(&drive_capacity, id->tnvmcap, 16);
 
