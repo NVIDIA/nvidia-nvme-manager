@@ -131,6 +131,97 @@ std::error_code NVMeMi::try_post(std::function<void(void)>&& func)
     return std::error_code();
 }
 
+void NVMeMi::miPCIePortInformation(
+    std::function<void(const std::error_code&, nvme_mi_read_port_info*)>&&
+        cb)
+{
+    if (!nvmeEP)
+    {
+        std::cerr << "[ addr: " << addr
+                  << ", eid: " << static_cast<int>(eid) << "]"
+                  << "nvme endpoint is invalid" << std::endl;
+
+        io.post([cb{std::move(cb)}]() {
+            cb(std::make_error_code(std::errc::no_such_device), nullptr);
+        });
+        return;
+    }
+
+    try
+    {
+        post([self{shared_from_this()}, cb{std::move(cb)}]() {
+            nvme_mi_read_nvm_ss_info ss_info;
+            auto rc = nvme_mi_mi_read_mi_data_subsys(self->nvmeEP, &ss_info);
+            if (rc < 0)
+            {
+
+                std::cerr << "[ addr: " << self->addr
+                          << ", eid: " << static_cast<int>(self->eid) << "]"
+                          << "fail to mi_read_mi_data_subsys: "
+                          << std::strerror(errno) << std::endl;
+                self->io.post([cb{std::move(cb)}, last_errno{errno}]() {
+                    cb(std::make_error_code(static_cast<std::errc>(last_errno)),
+                       nullptr);
+                });
+                return;
+            }
+            else if (rc > 0)
+            {
+                std::string_view errMsg =
+                    statusToString(static_cast<nvme_mi_resp_status>(rc));
+                std::cerr << "[ addr: " << self->addr
+                          << ", eid: " << static_cast<int>(self->eid) << "]"
+                          << "fail to mi_read_mi_data_subsys: " << errMsg
+                          << std::endl;
+                self->io.post([cb{std::move(cb)}]() {
+                    cb(std::make_error_code(std::errc::bad_message), nullptr);
+                });
+                return;
+            }
+            struct nvme_mi_read_port_info port;
+            memset(&port, 0, sizeof(port));
+            for (auto i = 0; i <= ss_info.nump; i++)
+            {
+                auto rc = nvme_mi_mi_read_mi_data_port(self->nvmeEP, i, &port);
+                if (rc != 0)
+                {
+                    std::string_view errMsg =
+                        statusToString(static_cast<nvme_mi_resp_status>(rc));
+                    std::cerr << "[ addr: " << self->addr
+                              << ", eid: " << static_cast<int>(self->eid) << "]"
+                              << "fail to mi_read_mi_data_subsys: " << errMsg
+                              << std::endl;
+                    self->io.post([cb{std::move(cb)}]() {
+                        cb(std::make_error_code(std::errc::bad_message),
+                           nullptr);
+                    });
+                    return;
+                }
+                // only select PCIe port
+                if (port.portt == 0x1)
+                {
+                    break;
+                }
+            }
+
+            self->io.post(
+                [cb{std::move(cb)}, port{std::move(port)}]() mutable {
+                cb({}, &port);
+            });
+        });
+    }
+    catch (const std::runtime_error& e)
+    {
+        std::cerr << "[ addr: " << addr
+                  << ", eid: " << static_cast<int>(eid) << "]" << e.what()
+                  << std::endl;
+        io.post([cb{std::move(cb)}]() {
+            cb(std::make_error_code(std::errc::no_such_device), {});
+        });
+        return;
+    }
+}
+
 void NVMeMi::miSubsystemHealthStatusPoll(
     std::function<void(const std::error_code&, nvme_mi_nvm_ss_health_status*)>&&
         cb)

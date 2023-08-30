@@ -71,6 +71,43 @@ std::string NVMeDevice::getManufacture(uint16_t vid)
     return "Unkown";
 }
 
+inline uint32_t getMaxLinkSpeed(uint8_t speed_vec, uint8_t lanes)
+{
+    // starting from 32 Gbs
+    int base = 32;
+
+    for (auto i = 4 ; i >= 0; i--)
+    {
+        if (speed_vec & ( 1 << i))
+        {
+            break;
+        }
+        base = base / 2;
+    }
+
+    return base * lanes;
+}
+
+inline uint32_t getCurrLinkSpeed(uint8_t speed, uint8_t lanes)
+{
+    uint32_t base = 32;
+    if (speed == 0)
+    {
+        // link not active
+        return 0;
+    }
+
+    for (auto i = 4 ; i >= 0; i--)
+    {
+        if ((speed - 1) == i)
+        {
+            break;
+        }
+        base = base / 2;
+    }
+    return base * lanes;
+}
+
 void NVMeDevice::initialize()
 {
     presence = 0;
@@ -133,6 +170,21 @@ void NVMeDevice::initialize()
                   Drive::capacity(drive_capacity[0]);
             });
     });
+    intf->miPCIePortInformation(
+        [self{shared_from_this()}](__attribute__((unused))
+                                   const std::error_code& err,
+                                   nvme_mi_read_port_info* port) {
+            if (err)
+            {
+                lg2::error("fail to get PCIePortInformation");
+                return;
+            }
+            self->sdbusplus::xyz::openbmc_project::Inventory::Item::server::
+                Port::maxSpeed(getMaxLinkSpeed(port->pcie.sls, port->pcie.mlw));
+            self->sdbusplus::xyz::openbmc_project::Inventory::Item::server::
+                Port::currentSpeed(
+                    getCurrLinkSpeed(port->pcie.cls, port->pcie.nlw));
+        });
 }
 
 void NVMeDevice::markFunctional(bool functional)

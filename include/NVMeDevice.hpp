@@ -14,11 +14,13 @@
 #include <xyz/openbmc_project/State/Decorator/OperationalStatus/server.hpp>
 #include <xyz/openbmc_project/Inventory/Item/StorageController/server.hpp>
 #include <xyz/openbmc_project/Software/Version/server.hpp>
+#include <xyz/openbmc_project/Inventory/Item/Port/server.hpp>
 #include <NVMeMi.hpp>
 
 using NvmeInterfaces = sdbusplus::server::object::object<
     sdbusplus::xyz::openbmc_project::Inventory::server::Item,
     sdbusplus::xyz::openbmc_project::Inventory::Item::server::StorageController,
+    sdbusplus::xyz::openbmc_project::Inventory::Item::server::Port,
     sdbusplus::xyz::openbmc_project::Inventory::Item::server::Drive,
     sdbusplus::xyz::openbmc_project::State::Decorator::server::
         OperationalStatus,
