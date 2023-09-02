@@ -1,42 +1,40 @@
 #include <NVMeDevice.hpp>
 #include <nvme-mi_config.h>
+#include <dbusutil.hpp>
 
 #include <boost/multiprecision/cpp_int.hpp>
 
 #include <iostream>
 #include <filesystem>
 
-template <typename T>
-T *toResponse(std::span<uint8_t> &data) 
-{
-    std::vector<uint8_t> tmp;
+const std::string driveFailureResolution{
+    "Ensure all cables are properly and securely connected. Ensure all drives are fully seated. Replace the defective cables, drive, or both."};
+const std::string drivePfaResolution{
+    "If this drive is not part of a fault-tolerant volume, first back up all data, then replace the drive and restore all data afterward. If this drive is part of a fault-tolerant volume, replace this drive as soon as possible as long as the health is OK"};
 
-    for (auto d : data) {
-        tmp.push_back(d);
-    }
-    T *resp = reinterpret_cast<T *>(tmp.data());
-    return resp;
-}
+const std::string redfishDrivePathPrefix{"/redfish/v1/Systems/System_0/Storage/1/Drives/"};
+const std::string redfishDriveName{"NVMe Drive"};
 
-NVMeDevice::NVMeDevice(
-    boost::asio::io_service& io,
-    sdbusplus::asio::object_server& objectServer,
-    std::shared_ptr<sdbusplus::asio::connection>& conn,
-    uint8_t eid, std::vector<uint8_t> addr, std::string path) :
-    NvmeInterfaces(
-        static_cast<sdbusplus::bus::bus&>(*conn),
-        path.c_str(),
-        NvmeInterfaces::action::defer_emit),std::enable_shared_from_this<NVMeDevice>(),
-    objServer(objectServer), scanTimer(io)
+using Level =
+        sdbusplus::xyz::openbmc_project::Logging::server::Entry::Level;
+
+NVMeDevice::NVMeDevice(boost::asio::io_service& io,
+                       sdbusplus::asio::object_server& objectServer,
+                       std::shared_ptr<sdbusplus::asio::connection>& conn,
+                       uint8_t eid, std::vector<uint8_t> addr,
+                       std::string path) :
+    NvmeInterfaces(static_cast<sdbusplus::bus::bus&>(*conn), path.c_str(),
+                   NvmeInterfaces::action::defer_emit),
+    std::enable_shared_from_this<NVMeDevice>(), conn(conn),
+    objServer(objectServer), scanTimer(io), driveFunctional(false),
+    smartWarning(0xff), objPath(path)
 {
     std::filesystem::path p(path);
-    
 
-    AssociationList assocs = {};
+    driveIndex = p.filename();
 
-    assocs.emplace_back("chassis", "drive", driveLocation);
-    sdbusplus::xyz::openbmc_project::Association::server::Definitions::
-        associations(assocs);
+    //assume the drive is good and update Dbus properties at the first place.
+    markFunctional(true);
 
     nvmeIntf = NVMeIntf::create<NVMeMi>(io, conn, addr, eid);
     intf = std::get<std::shared_ptr<NVMeMiIntf>>(nvmeIntf.getInferface());
@@ -143,7 +141,7 @@ void NVMeDevice::initialize()
                 return;
               }
 
-              auto id = toResponse<nvme_id_ctrl>(data);
+              struct nvme_id_ctrl* id = (struct nvme_id_ctrl*)data.data();
 
               self->sdbusplus::xyz::openbmc_project::Inventory::Decorator::
                   server::Asset::manufacturer(self->getManufacture(id->vid));
@@ -187,24 +185,118 @@ void NVMeDevice::initialize()
         });
 }
 
+void NVMeDevice::markStatus(std::string status)
+{
+    assocs = {};
+
+    if (status == "critical")
+    {
+        assocs.emplace_back("health", status, objPath.c_str());
+        sdbusplus::xyz::openbmc_project::State::Decorator::server::Health::
+            health(sdbusplus::xyz::openbmc_project::State::Decorator::server::
+                       Health::HealthType::Critical);
+    }
+    else if (status == "warning")
+    {
+        assocs.emplace_back("health", status, objPath.c_str());
+        sdbusplus::xyz::openbmc_project::State::Decorator::server::Health::
+            health(sdbusplus::xyz::openbmc_project::State::Decorator::server::
+                       Health::HealthType::Warning);
+    }
+    else
+    {
+        sdbusplus::xyz::openbmc_project::State::Decorator::server::Health::
+            health(sdbusplus::xyz::openbmc_project::State::Decorator::server::
+                       Health::HealthType::OK);
+    }
+    assocs.emplace_back("chassis", "drive", driveLocation);
+    sdbusplus::xyz::openbmc_project::Association::server::Definitions::
+        associations(assocs);
+}
+
 void NVMeDevice::markFunctional(bool functional)
 {
-    driveFunctional = functional;
-    // mark device state
-    if (!functional)
+
+    if (driveFunctional != functional)
     {
-        sdbusplus::xyz::openbmc_project::State::Decorator::server::OperationalStatus::functional(false);
-        sdbusplus::xyz::openbmc_project::State::Decorator::server::
-            OperationalStatus::state(
-                sdbusplus::xyz::openbmc_project::State::Decorator::server::
-                    OperationalStatus::StateType::Fault);
+        // mark device state
+        if (functional == false)
+        {
+            sdbusplus::xyz::openbmc_project::State::Decorator::server::
+                OperationalStatus::functional(false);
+            sdbusplus::xyz::openbmc_project::State::Decorator::server::
+                OperationalStatus::state(
+                    sdbusplus::xyz::openbmc_project::State::Decorator::server::
+                        OperationalStatus::StateType::Fault);
+            
+            markStatus("critical");
+
+            createLogEntry(conn, "ResourceEvent.1.0.ResourceErrorsDetected",
+                           Level::Critical, redfishDriveName + driveIndex,
+                           "Drive Failure", driveFailureResolution,
+                           redfishDrivePathPrefix + driveIndex);
+        }
+        else
+        {
+            sdbusplus::xyz::openbmc_project::State::Decorator::server::
+                OperationalStatus::functional(true);
+            sdbusplus::xyz::openbmc_project::State::Decorator::server::
+                OperationalStatus::state(
+                    sdbusplus::xyz::openbmc_project::State::Decorator::server::
+                        OperationalStatus::StateType::None);
+            markStatus("ok");
+        }
     }
-    else {
-        sdbusplus::xyz::openbmc_project::State::Decorator::server::OperationalStatus::functional(true);
-        sdbusplus::xyz::openbmc_project::State::Decorator::server::
-            OperationalStatus::state(
-                sdbusplus::xyz::openbmc_project::State::Decorator::server::
-                    OperationalStatus::StateType::None);
+    driveFunctional = functional;
+}
+
+void NVMeDevice::generateRedfishEventbySmart(uint8_t sw)
+{
+    if (sw & NVME_SMART_CRIT_PMR_RO)
+    {
+        createLogEntry(
+            conn, "ResourceEvent.1.0.ResourceErrorsDetected", Level::Warning,
+            redfishDriveName + driveIndex,
+            "Persistent Memory Region has become read-only or unreliable",
+            drivePfaResolution, redfishDrivePathPrefix + driveIndex);
+    }
+    if (sw & NVME_SMART_CRIT_VOLATILE_MEMORY)
+    {
+        createLogEntry(conn, "ResourceEvent.1.0.ResourceErrorsDetected",
+                       Level::Warning, redfishDriveName + driveIndex,
+                       "volatile memory backup device has failed",
+                       drivePfaResolution, redfishDrivePathPrefix + driveIndex);
+    }
+    if (sw & NVME_SMART_CRIT_SPARE)
+    {
+        createLogEntry(
+            conn, "ResourceEvent.1.0.ResourceErrorsDetected", Level::Warning,
+            redfishDriveName + driveIndex,
+            "available spare capacity has fallen below the threshold",
+            drivePfaResolution, redfishDrivePathPrefix + driveIndex);
+    }
+    if (sw & NVME_SMART_CRIT_DEGRADED)
+    {
+        createLogEntry(conn, "ResourceEvent.1.0.ResourceErrorsDetected",
+                       Level::Warning, redfishDriveName + driveIndex,
+                       "NVM subsystem reliability has been degraded",
+                       drivePfaResolution, redfishDrivePathPrefix + driveIndex);
+    }
+    if (sw & NVME_SMART_CRIT_MEDIA)
+    {
+        createLogEntry(conn, "ResourceEvent.1.0.ResourceErrorsDetected",
+                       Level::Warning, redfishDriveName + driveIndex,
+                       "all of the media has been placed in read only mode",
+                       drivePfaResolution, redfishDrivePathPrefix + driveIndex);
+    }
+    if (sw & NVME_SMART_CRIT_TEMPERATURE)
+    {
+        createLogEntry(
+            conn, "ResourceEvent.1.0.ResourceErrorsDetected", Level::Warning,
+            redfishDriveName + driveIndex,
+            "temperature is over or under the threshold",
+            "Check the condition of the resource listed in OriginOfCondition",
+            redfishDrivePathPrefix + driveIndex);
     }
 }
 
@@ -242,20 +334,14 @@ void NVMeDevice::pollDrive()
               }
               self->sdbusplus::xyz::openbmc_project::Nvme::server::Status::
                   driveLifeUsed(std::to_string(ss->pdlu));
-              self->sdbusplus::xyz::openbmc_project::Nvme::server::Status::
-                  smartWarnings(std::to_string(ss->sw));
 
               // the percentage is allowed to exceed 100 based on the spec.
               auto percentage = (ss->pdlu > 100) ? 100 : ss->pdlu;
               self->sdbusplus::xyz::openbmc_project::Inventory::Item::server::
                   Drive::predictedMediaLifeLeftPercent(100 - percentage);
 
-              // drive failure
-              if (ss->nss & 0x20) {
-                self->markFunctional(false);
-              }
+              self->markFunctional(ss->nss & 0x20);
 
-              lg2::error(" NVM subsystem status : {VAL}", "VAL", ss->nss);
               lg2::error(" NVM composite temp. : {VAL}", "VAL", ss->ctemp);
             });
 
@@ -268,31 +354,36 @@ void NVMeDevice::pollDrive()
                 return;
               }
 
-              auto log = toResponse<nvme_smart_log>(smart);
+              struct nvme_smart_log *log;
+              log = (struct nvme_smart_log *) smart.data();
 
-              // the error indicator is from smart warning
-              if (log->critical_warning & 0x10) {
-                self->sdbusplus::xyz::openbmc_project::Nvme::server::Status::
-                    backupDeviceFault(true);
+              auto sw = self->getSmartWarning();
+              if (log->critical_warning != sw)
+              {
+                  // the error indicator is from smart warning
+                  self->sdbusplus::xyz::openbmc_project::Nvme::server::Status::
+                      backupDeviceFault(log->critical_warning &
+                                        NVME_SMART_CRIT_VOLATILE_MEMORY);
+                  self->sdbusplus::xyz::openbmc_project::Nvme::server::Status::
+                      capacityFault(log->critical_warning &
+                                    NVME_SMART_CRIT_SPARE);
+                  self->sdbusplus::xyz::openbmc_project::Nvme::server::Status::
+                      temperatureFault(log->critical_warning &
+                                       NVME_SMART_CRIT_TEMPERATURE);
+                  self->sdbusplus::xyz::openbmc_project::Nvme::server::Status::
+                      degradesFault(log->critical_warning &
+                                    NVME_SMART_CRIT_DEGRADED);
+                  self->sdbusplus::xyz::openbmc_project::Nvme::server::Status::
+                      mediaFault(log->critical_warning & NVME_SMART_CRIT_MEDIA);
+                  self->sdbusplus::xyz::openbmc_project::Nvme::server::Status::
+                      smartWarnings(std::to_string(log->critical_warning));
+
+                  self->markStatus("warning");
+                  self->generateRedfishEventbySmart(log->critical_warning);
               }
-              if (log->critical_warning & 0x01) {
-                self->sdbusplus::xyz::openbmc_project::Nvme::server::Status::
-                    capacityFault(true);
-              }
-              if (log->critical_warning & 0x02) {
-                self->sdbusplus::xyz::openbmc_project::Nvme::server::Status::
-                    temperatureFault(true);
-              }
-              if (log->critical_warning & 0x04) {
-                self->sdbusplus::xyz::openbmc_project::Nvme::server::Status::
-                    degradesFault(true);
-              }
-              if (log->critical_warning & 0x08) {
-                self->sdbusplus::xyz::openbmc_project::Nvme::server::Status::
-                    mediaFault(true);
-              }
+              self->updateSmartWarning(log->critical_warning);
               boost::multiprecision::uint128_t powerOnHours;
-              memcpy((void *)&powerOnHours,log->power_on_hours,16);
+              memcpy((void *)&powerOnHours, log->power_on_hours, 16);
             });
 
         self->pollDrive();

@@ -11,6 +11,7 @@
 #include <xyz/openbmc_project/Inventory/Item/Drive/server.hpp>
 #include <xyz/openbmc_project/Inventory/Item/server.hpp>
 #include <xyz/openbmc_project/Nvme/Status/server.hpp>
+#include <xyz/openbmc_project/State/Decorator/Health/server.hpp>
 #include <xyz/openbmc_project/State/Decorator/OperationalStatus/server.hpp>
 #include <xyz/openbmc_project/Inventory/Item/StorageController/server.hpp>
 #include <xyz/openbmc_project/Software/Version/server.hpp>
@@ -22,6 +23,7 @@ using NvmeInterfaces = sdbusplus::server::object::object<
     sdbusplus::xyz::openbmc_project::Inventory::Item::server::StorageController,
     sdbusplus::xyz::openbmc_project::Inventory::Item::server::Port,
     sdbusplus::xyz::openbmc_project::Inventory::Item::server::Drive,
+    sdbusplus::xyz::openbmc_project::State::Decorator::server::Health,
     sdbusplus::xyz::openbmc_project::State::Decorator::server::
         OperationalStatus,
     sdbusplus::xyz::openbmc_project::Inventory::Decorator::server::Asset,
@@ -56,6 +58,8 @@ class NVMeDevice :
     void initialize();
     void pollDrive(void);
     void markFunctional(bool functional);
+    void markStatus(std::string status);
+    void generateRedfishEventbySmart(uint8_t sw);
 
     std::string stripString(char *src, size_t len);
     std::string getManufacture(uint16_t vid);
@@ -64,15 +68,35 @@ class NVMeDevice :
     {
         return intf;
     }
+
+    uint8_t getSmartWarning()
+    {
+        return smartWarning;
+    }
+
+    void updateSmartWarning(uint8_t newValue)
+    {
+        smartWarning = newValue;
+    }
+    
+    bool getDriveFunctional()
+    {
+        return driveFunctional;
+    }
   private:
     std::shared_ptr<sdbusplus::asio::dbus_interface> driveInterface;
+    std::shared_ptr<sdbusplus::asio::connection> conn;
     sdbusplus::asio::object_server& objServer;
     boost::asio::steady_timer scanTimer;
 
     bool driveFunctional;
+    uint8_t smartWarning;
     NVMeIntf nvmeIntf;
     std::shared_ptr<NVMeMiIntf> intf;
+    std::string driveIndex;
 
+    AssociationList assocs;
     nvme_mi_ctrl_t ctrl;
     bool presence;
+    std::string objPath;
 };
