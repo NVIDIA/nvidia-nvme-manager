@@ -18,18 +18,25 @@
 #include <xyz/openbmc_project/Inventory/Item/Port/server.hpp>
 #include <NVMeMi.hpp>
 
+using Item = sdbusplus::xyz::openbmc_project::Inventory::server::Item;
+using Drive = sdbusplus::xyz::openbmc_project::Inventory::Item::server::Drive;
+using Asset =
+    sdbusplus::xyz::openbmc_project::Inventory::Decorator::server::Asset;
+using Port = sdbusplus::xyz::openbmc_project::Inventory::Item::server::Port;
+using Version = sdbusplus::xyz::openbmc_project::Software::server::Version;
+using Health =
+    sdbusplus::xyz::openbmc_project::State::Decorator::server::Health;
+using Associations =
+    sdbusplus::xyz::openbmc_project::Association::server::Definitions;
+using OperationalStatus = sdbusplus::xyz::openbmc_project::State::Decorator::
+    server::OperationalStatus;
+using NvMeStatus = sdbusplus::xyz::openbmc_project::Nvme::server::Status;
+
 using NvmeInterfaces = sdbusplus::server::object::object<
-    sdbusplus::xyz::openbmc_project::Inventory::server::Item,
+    Item,
     sdbusplus::xyz::openbmc_project::Inventory::Item::server::StorageController,
-    sdbusplus::xyz::openbmc_project::Inventory::Item::server::Port,
-    sdbusplus::xyz::openbmc_project::Inventory::Item::server::Drive,
-    sdbusplus::xyz::openbmc_project::State::Decorator::server::Health,
-    sdbusplus::xyz::openbmc_project::State::Decorator::server::
-        OperationalStatus,
-    sdbusplus::xyz::openbmc_project::Inventory::Decorator::server::Asset,
-    sdbusplus::xyz::openbmc_project::Software::server::Version,
-    sdbusplus::xyz::openbmc_project::Nvme::server::Status,
-    sdbusplus::xyz::openbmc_project::Association::server::Definitions>;
+    Port, Drive, Health, OperationalStatus, Asset, Version, NvMeStatus,
+    Associations>;
 
 using AssociationList =
     std::vector<std::tuple<std::string, std::string, std::string>>;

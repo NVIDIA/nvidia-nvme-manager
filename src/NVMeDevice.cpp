@@ -110,12 +110,8 @@ void NVMeDevice::initialize()
 {
     presence = 0;
 
-    sdbusplus::xyz::openbmc_project::Inventory::Item::server::Drive::type(
-        sdbusplus::xyz::openbmc_project::Inventory::Item::server::Drive::
-            DriveType::SSD);
-    sdbusplus::xyz::openbmc_project::Inventory::Item::server::Drive::protocol(
-        sdbusplus::xyz::openbmc_project::Inventory::Item::server::Drive::
-            DriveProtocol::NVMe);
+    Drive::type(Drive::DriveType::SSD);
+    Drive::protocol(Drive::DriveProtocol::NVMe);
 
     intf->miScanCtrl([self{shared_from_this()}](
                          const std::error_code& ec,
@@ -124,11 +120,11 @@ void NVMeDevice::initialize()
         {
             lg2::error("fail to scan controllers for the nvme subsystem {ERR}: {MSG}", "ERR", ec.value(), "MSG", ec.message());
             self->presence = false;
-            self->sdbusplus::xyz::openbmc_project::Inventory::server::Item::present(false);
+            self->Item::present(false);
             return;
         }
         self->presence = true;
-        self->sdbusplus::xyz::openbmc_project::Inventory::server::Item::present(true);
+        self->Item::present(true);
 
         self->ctrl = ctrlList.back();
         self->getIntf()->adminIdentify(
@@ -143,20 +139,14 @@ void NVMeDevice::initialize()
 
               struct nvme_id_ctrl* id = (struct nvme_id_ctrl*)data.data();
 
-              self->sdbusplus::xyz::openbmc_project::Inventory::Decorator::
-                  server::Asset::manufacturer(self->getManufacture(id->vid));
-              self->sdbusplus::xyz::openbmc_project::Inventory::Decorator::
-                  server::Asset::serialNumber(
-                      self->stripString(id->sn, sizeof(id->sn)));
-
-              self->sdbusplus::xyz::openbmc_project::Inventory::Decorator::
-                  server::Asset::model(
-                      self->stripString(id->mn, sizeof(id->mn)));
+              self->Asset::manufacturer(self->getManufacture(id->vid));
+              self->Asset::serialNumber(
+                  self->stripString(id->sn, sizeof(id->sn)));
+              self->Asset::model(self->stripString(id->mn, sizeof(id->mn)));
 
               std::string fr;
               fr.assign(id->fr, id->fr + 8);
-              self->sdbusplus::xyz::openbmc_project::Software::server::Version::
-                  version(fr);
+              self->Version::version(fr);
 
               uint64_t drive_capacity[2];
               memcpy(&drive_capacity, id->tnvmcap, 16);
@@ -164,8 +154,7 @@ void NVMeDevice::initialize()
               /* 8 bytes presenting the drive capacity is enough to support all
                * drives outside market.
                */
-              self->sdbusplus::xyz::openbmc_project::Inventory::Item::server::
-                  Drive::capacity(drive_capacity[0]);
+              self->Drive::capacity(drive_capacity[0]);
             });
     });
     intf->miPCIePortInformation(
@@ -177,11 +166,10 @@ void NVMeDevice::initialize()
                 lg2::error("fail to get PCIePortInformation");
                 return;
             }
-            self->sdbusplus::xyz::openbmc_project::Inventory::Item::server::
-                Port::maxSpeed(getMaxLinkSpeed(port->pcie.sls, port->pcie.mlw));
-            self->sdbusplus::xyz::openbmc_project::Inventory::Item::server::
-                Port::currentSpeed(
-                    getCurrLinkSpeed(port->pcie.cls, port->pcie.nlw));
+            self->Port::maxSpeed(
+                getMaxLinkSpeed(port->pcie.sls, port->pcie.mlw));
+            self->Port::currentSpeed(
+                getCurrLinkSpeed(port->pcie.cls, port->pcie.nlw));
         });
 }
 
@@ -192,43 +180,30 @@ void NVMeDevice::markStatus(std::string status)
     if (status == "critical")
     {
         assocs.emplace_back("health", status, objPath.c_str());
-        sdbusplus::xyz::openbmc_project::State::Decorator::server::Health::
-            health(sdbusplus::xyz::openbmc_project::State::Decorator::server::
-                       Health::HealthType::Critical);
+        Health::health(Health::HealthType::Critical);
     }
     else if (status == "warning")
     {
         assocs.emplace_back("health", status, objPath.c_str());
-        sdbusplus::xyz::openbmc_project::State::Decorator::server::Health::
-            health(sdbusplus::xyz::openbmc_project::State::Decorator::server::
-                       Health::HealthType::Warning);
+        Health::health(Health::HealthType::Warning);
     }
     else
     {
-        sdbusplus::xyz::openbmc_project::State::Decorator::server::Health::
-            health(sdbusplus::xyz::openbmc_project::State::Decorator::server::
-                       Health::HealthType::OK);
+        Health::health(Health::HealthType::OK);
     }
     assocs.emplace_back("chassis", "drive", driveLocation);
-    sdbusplus::xyz::openbmc_project::Association::server::Definitions::
-        associations(assocs);
+    Associations::associations(assocs);
 }
 
 void NVMeDevice::markFunctional(bool functional)
 {
-
     if (driveFunctional != functional)
     {
         // mark device state
         if (functional == false)
         {
-            sdbusplus::xyz::openbmc_project::State::Decorator::server::
-                OperationalStatus::functional(false);
-            sdbusplus::xyz::openbmc_project::State::Decorator::server::
-                OperationalStatus::state(
-                    sdbusplus::xyz::openbmc_project::State::Decorator::server::
-                        OperationalStatus::StateType::Fault);
-            
+            OperationalStatus::functional(false);
+            OperationalStatus::state(OperationalStatus::StateType::Fault);
             markStatus("critical");
 
             createLogEntry(conn, "ResourceEvent.1.0.ResourceErrorsDetected",
@@ -238,12 +213,8 @@ void NVMeDevice::markFunctional(bool functional)
         }
         else
         {
-            sdbusplus::xyz::openbmc_project::State::Decorator::server::
-                OperationalStatus::functional(true);
-            sdbusplus::xyz::openbmc_project::State::Decorator::server::
-                OperationalStatus::state(
-                    sdbusplus::xyz::openbmc_project::State::Decorator::server::
-                        OperationalStatus::StateType::None);
+            OperationalStatus::functional(true);
+            OperationalStatus::state(OperationalStatus::StateType::None);
             markStatus("ok");
         }
     }
@@ -302,7 +273,6 @@ void NVMeDevice::generateRedfishEventbySmart(uint8_t sw)
 
 void NVMeDevice::pollDrive()
 {
-
     scanTimer.expires_from_now(std::chrono::seconds(5));
     scanTimer.async_wait([self{shared_from_this()}](
                              const boost::system::error_code errorCode) {
@@ -332,8 +302,7 @@ void NVMeDevice::pollDrive()
                            "ERR", err.value(), "MSG", err.message());
                 return;
               }
-              self->sdbusplus::xyz::openbmc_project::Nvme::server::Status::
-                  driveLifeUsed(std::to_string(ss->pdlu));
+              self->NvMeStatus::driveLifeUsed(std::to_string(ss->pdlu));
 
               // the percentage is allowed to exceed 100 based on the spec.
               auto percentage = (ss->pdlu > 100) ? 100 : ss->pdlu;
@@ -361,22 +330,18 @@ void NVMeDevice::pollDrive()
               if (log->critical_warning != sw)
               {
                   // the error indicator is from smart warning
-                  self->sdbusplus::xyz::openbmc_project::Nvme::server::Status::
-                      backupDeviceFault(log->critical_warning &
-                                        NVME_SMART_CRIT_VOLATILE_MEMORY);
-                  self->sdbusplus::xyz::openbmc_project::Nvme::server::Status::
-                      capacityFault(log->critical_warning &
-                                    NVME_SMART_CRIT_SPARE);
-                  self->sdbusplus::xyz::openbmc_project::Nvme::server::Status::
-                      temperatureFault(log->critical_warning &
-                                       NVME_SMART_CRIT_TEMPERATURE);
-                  self->sdbusplus::xyz::openbmc_project::Nvme::server::Status::
-                      degradesFault(log->critical_warning &
-                                    NVME_SMART_CRIT_DEGRADED);
-                  self->sdbusplus::xyz::openbmc_project::Nvme::server::Status::
-                      mediaFault(log->critical_warning & NVME_SMART_CRIT_MEDIA);
-                  self->sdbusplus::xyz::openbmc_project::Nvme::server::Status::
-                      smartWarnings(std::to_string(log->critical_warning));
+                  self->NvMeStatus::backupDeviceFault(
+                      log->critical_warning & NVME_SMART_CRIT_VOLATILE_MEMORY);
+                  self->NvMeStatus::capacityFault(log->critical_warning &
+                                                  NVME_SMART_CRIT_SPARE);
+                  self->NvMeStatus::temperatureFault(
+                      log->critical_warning & NVME_SMART_CRIT_TEMPERATURE);
+                  self->NvMeStatus::degradesFault(log->critical_warning &
+                                                  NVME_SMART_CRIT_DEGRADED);
+                  self->NvMeStatus::mediaFault(log->critical_warning &
+                                               NVME_SMART_CRIT_MEDIA);
+                  self->NvMeStatus::smartWarnings(
+                      std::to_string(log->critical_warning));
 
                   self->markStatus("warning");
                   self->generateRedfishEventbySmart(log->critical_warning);
