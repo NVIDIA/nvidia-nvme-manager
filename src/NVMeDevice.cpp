@@ -321,7 +321,7 @@ void NVMeDevice::markFunctional(bool functional)
 
 void NVMeDevice::generateRedfishEventbySmart(uint8_t sw)
 {
-    if (sw & NVME_SMART_CRIT_PMR_RO)
+    if (sw & (NVME_SMART_CRIT_PMR_RO))
     {
         createLogEntry(
             conn, "ResourceEvent.1.0.ResourceErrorsDetected", Level::Warning,
@@ -329,14 +329,14 @@ void NVMeDevice::generateRedfishEventbySmart(uint8_t sw)
             "Persistent Memory Region has become read-only or unreliable",
             drivePfaResolution, redfishDrivePathPrefix + driveIndex);
     }
-    if (sw & NVME_SMART_CRIT_VOLATILE_MEMORY)
+    if (sw & (NVME_SMART_CRIT_VOLATILE_MEMORY))
     {
         createLogEntry(conn, "ResourceEvent.1.0.ResourceErrorsDetected",
                        Level::Warning, redfishDriveName + driveIndex,
                        "volatile memory backup device has failed",
                        drivePfaResolution, redfishDrivePathPrefix + driveIndex);
     }
-    if (sw & NVME_SMART_CRIT_SPARE)
+    if (sw & (NVME_SMART_CRIT_SPARE))
     {
         createLogEntry(
             conn, "ResourceEvent.1.0.ResourceErrorsDetected", Level::Warning,
@@ -344,21 +344,21 @@ void NVMeDevice::generateRedfishEventbySmart(uint8_t sw)
             "available spare capacity has fallen below the threshold",
             drivePfaResolution, redfishDrivePathPrefix + driveIndex);
     }
-    if (sw & NVME_SMART_CRIT_DEGRADED)
+    if (sw & (NVME_SMART_CRIT_DEGRADED))
     {
         createLogEntry(conn, "ResourceEvent.1.0.ResourceErrorsDetected",
                        Level::Warning, redfishDriveName + driveIndex,
                        "NVM subsystem reliability has been degraded",
                        drivePfaResolution, redfishDrivePathPrefix + driveIndex);
     }
-    if (sw & NVME_SMART_CRIT_MEDIA)
+    if (sw & (NVME_SMART_CRIT_MEDIA))
     {
         createLogEntry(conn, "ResourceEvent.1.0.ResourceErrorsDetected",
                        Level::Warning, redfishDriveName + driveIndex,
                        "all of the media has been placed in read only mode",
                        drivePfaResolution, redfishDrivePathPrefix + driveIndex);
     }
-    if (sw & NVME_SMART_CRIT_TEMPERATURE)
+    if (sw & (NVME_SMART_CRIT_TEMPERATURE))
     {
         createLogEntry(
             conn, "ResourceEvent.1.0.ResourceErrorsDetected", Level::Warning,
@@ -429,15 +429,16 @@ void NVMeDevice::pollDrive()
               {
                   // the error indicator is from smart warning
                   self->NVMeStatus::backupDeviceFault(
-                      log->critical_warning & NVME_SMART_CRIT_VOLATILE_MEMORY);
+                      log->critical_warning &
+                      (NVME_SMART_CRIT_VOLATILE_MEMORY));
                   self->NVMeStatus::capacityFault(log->critical_warning &
-                                                  NVME_SMART_CRIT_SPARE);
+                                                  (NVME_SMART_CRIT_SPARE));
                   self->NVMeStatus::temperatureFault(
-                      log->critical_warning & NVME_SMART_CRIT_TEMPERATURE);
+                      log->critical_warning & (NVME_SMART_CRIT_TEMPERATURE));
                   self->NVMeStatus::degradesFault(log->critical_warning &
-                                                  NVME_SMART_CRIT_DEGRADED);
+                                                  (NVME_SMART_CRIT_DEGRADED));
                   self->NVMeStatus::mediaFault(log->critical_warning &
-                                               NVME_SMART_CRIT_MEDIA);
+                                               (NVME_SMART_CRIT_MEDIA));
                   self->NVMeStatus::smartWarnings(
                       std::to_string(log->critical_warning));
 
