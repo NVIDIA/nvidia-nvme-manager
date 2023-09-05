@@ -2,9 +2,11 @@
 #include <nvme-mi_config.h>
 #include <dbusutil.hpp>
 
+#include <nlohmann/json.hpp>
 #include <boost/multiprecision/cpp_int.hpp>
 
 #include <iostream>
+#include <fstream>
 #include <filesystem>
 
 const std::string driveFailureResolution{
@@ -15,8 +17,12 @@ const std::string drivePfaResolution{
 const std::string redfishDrivePathPrefix{"/redfish/v1/Systems/System_0/Storage/1/Drives/"};
 const std::string redfishDriveName{"NVMe Drive"};
 
+const std::string driveConfig{"/usr/share/nvidia-nvme-manager/drive.json"};
+
 using Level =
         sdbusplus::xyz::openbmc_project::Logging::server::Entry::Level;
+
+using Json = nlohmann::json;
 
 NVMeDevice::NVMeDevice(boost::asio::io_service& io,
                        sdbusplus::asio::object_server& objectServer,
@@ -27,7 +33,7 @@ NVMeDevice::NVMeDevice(boost::asio::io_service& io,
                    NvmeInterfaces::action::defer_emit),
     std::enable_shared_from_this<NVMeDevice>(), conn(conn),
     objServer(objectServer), scanTimer(io), driveFunctional(false),
-    smartWarning(0xff), objPath(path)
+    smartWarning(0xff), objPath(path), eid(eid)
 {
     std::filesystem::path p(path);
 
@@ -38,9 +44,77 @@ NVMeDevice::NVMeDevice(boost::asio::io_service& io,
 
     nvmeIntf = NVMeIntf::create<NVMeMi>(io, conn, addr, eid);
     intf = std::get<std::shared_ptr<NVMeMiIntf>>(nvmeIntf.getInferface());
-
 }
     
+inline Drive::DriveFormFactor getDriveFormFactor(std::string form)
+{
+    if (form == "Drive3_5")
+    {
+        return Drive::DriveFormFactor::Drive3_5;
+    }
+    else if (form == "Drive2_5")
+    {
+        return Drive::DriveFormFactor::Drive2_5;
+    }
+    else if (form == "EDSFF_1U_Long")
+    {
+        return Drive::DriveFormFactor::EDSFF_1U_Long;
+    }
+    else if (form == "EDSFF_1U_Short")
+    {
+        return Drive::DriveFormFactor::EDSFF_1U_Short;
+    }
+    else if (form == "EDSFF_E3_Short")
+    {
+        return Drive::DriveFormFactor::EDSFF_E3_Short;
+    }
+    else if (form == "EDSFF_E3_Long")
+    {
+        return Drive::DriveFormFactor::EDSFF_E3_Long;
+    }
+    else if (form == "M2_2230")
+    {
+        return Drive::DriveFormFactor::M2_2230;
+    }
+    else if (form == "M2_2242")
+    {
+        return Drive::DriveFormFactor::M2_2242;
+    }
+    else if (form == "M2_2260")
+    {
+        return Drive::DriveFormFactor::M2_2260;
+    }
+    else if (form == "M2_2280")
+    {
+        return Drive::DriveFormFactor::M2_2280;
+    }
+    else if (form == "M2_22110")
+    {
+        return Drive::DriveFormFactor::M2_22110;
+    }
+    else if (form == "U2")
+    {
+        return Drive::DriveFormFactor::U2;
+    }
+    else if (form == "PCIeSlotFullLength")
+    {
+        return Drive::DriveFormFactor::PCIeSlotFullLength;
+    }
+    else if (form == "PCIeSlotLowProfile")
+    {
+        return Drive::DriveFormFactor::PCIeSlotLowProfile;
+    }
+    else if (form == "PCIeHalfLength")
+    {
+        return Drive::DriveFormFactor::PCIeHalfLength;
+    }
+    else if (form == "OEM")
+    {
+        return Drive::DriveFormFactor::OEM;
+    }
+    return Drive::DriveFormFactor::U2;
+}
+
 std::string NVMeDevice::stripString(char *src, size_t len)
 {
     std::string s;
@@ -171,6 +245,30 @@ void NVMeDevice::initialize()
             self->Port::currentSpeed(
                 getCurrLinkSpeed(port->pcie.cls, port->pcie.nlw));
         });
+
+    // get drive's location and form factor from Json file.
+    std::ifstream jsonFile(driveConfig);
+    auto data = Json::parse(jsonFile, nullptr, false);
+    try
+    {
+        auto drives = data["drive"];
+        for(auto &d : drives) {
+            auto driveEid = d["eid"].get<std::uint8_t>();
+            if (eid == driveEid)
+            {
+                auto loc = d["location"].get<std::string>();
+                Location::locationCode(loc);
+                auto formFactor = getDriveFormFactor(d["form_factor"].get<std::string>());
+                Drive::formFactor(formFactor);
+            }
+        }
+    }
+    catch (const std::exception& e)
+    {
+        // drive json only populate location and form factor
+        // continue with other properties if json parsing failed
+        lg2::error("failed to parse drive json file.");
+    }
 }
 
 void NVMeDevice::markStatus(std::string status)
@@ -302,7 +400,7 @@ void NVMeDevice::pollDrive()
                            "ERR", err.value(), "MSG", err.message());
                 return;
               }
-              self->NvMeStatus::driveLifeUsed(std::to_string(ss->pdlu));
+              self->NVMeStatus::driveLifeUsed(std::to_string(ss->pdlu));
 
               // the percentage is allowed to exceed 100 based on the spec.
               auto percentage = (ss->pdlu > 100) ? 100 : ss->pdlu;
@@ -330,17 +428,17 @@ void NVMeDevice::pollDrive()
               if (log->critical_warning != sw)
               {
                   // the error indicator is from smart warning
-                  self->NvMeStatus::backupDeviceFault(
+                  self->NVMeStatus::backupDeviceFault(
                       log->critical_warning & NVME_SMART_CRIT_VOLATILE_MEMORY);
-                  self->NvMeStatus::capacityFault(log->critical_warning &
+                  self->NVMeStatus::capacityFault(log->critical_warning &
                                                   NVME_SMART_CRIT_SPARE);
-                  self->NvMeStatus::temperatureFault(
+                  self->NVMeStatus::temperatureFault(
                       log->critical_warning & NVME_SMART_CRIT_TEMPERATURE);
-                  self->NvMeStatus::degradesFault(log->critical_warning &
+                  self->NVMeStatus::degradesFault(log->critical_warning &
                                                   NVME_SMART_CRIT_DEGRADED);
-                  self->NvMeStatus::mediaFault(log->critical_warning &
+                  self->NVMeStatus::mediaFault(log->critical_warning &
                                                NVME_SMART_CRIT_MEDIA);
-                  self->NvMeStatus::smartWarnings(
+                  self->NVMeStatus::smartWarnings(
                       std::to_string(log->critical_warning));
 
                   self->markStatus("warning");

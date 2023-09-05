@@ -16,6 +16,7 @@
 #include <xyz/openbmc_project/Inventory/Item/StorageController/server.hpp>
 #include <xyz/openbmc_project/Software/Version/server.hpp>
 #include <xyz/openbmc_project/Inventory/Item/Port/server.hpp>
+#include <xyz/openbmc_project/Inventory/Decorator/LocationCode/server.hpp>
 #include <NVMeMi.hpp>
 
 using Item = sdbusplus::xyz::openbmc_project::Inventory::server::Item;
@@ -30,22 +31,19 @@ using Associations =
     sdbusplus::xyz::openbmc_project::Association::server::Definitions;
 using OperationalStatus = sdbusplus::xyz::openbmc_project::State::Decorator::
     server::OperationalStatus;
-using NvMeStatus = sdbusplus::xyz::openbmc_project::Nvme::server::Status;
+using NVMeStatus = sdbusplus::xyz::openbmc_project::Nvme::server::Status;
+using Location = sdbusplus::xyz::openbmc_project::Inventory::Decorator::server::LocationCode;
+using StorageController = sdbusplus::xyz::openbmc_project::Inventory::Item::server::StorageController;
 
-using NvmeInterfaces = sdbusplus::server::object::object<
-    Item,
-    sdbusplus::xyz::openbmc_project::Inventory::Item::server::StorageController,
-    Port, Drive, Health, OperationalStatus, Asset, Version, NvMeStatus,
-    Associations>;
-
+using NvmeInterfaces =
+    sdbusplus::server::object::object<Item, StorageController, Port, Drive,
+                                      Health, OperationalStatus, Asset, Version,
+                                      NVMeStatus, Location, Associations>;
 using AssociationList =
     std::vector<std::tuple<std::string, std::string, std::string>>;
 
 namespace fs = std::filesystem;
 
-
-// using NVMEMap = boost::container::flat_map<unit8_t,
-// std::shared_ptr<NVMeDevice>>;
 class NVMeDevice :
     public NvmeInterfaces,
     public std::enable_shared_from_this<NVMeDevice>
@@ -106,4 +104,5 @@ class NVMeDevice :
     nvme_mi_ctrl_t ctrl;
     bool presence;
     std::string objPath;
+    uint8_t eid;
 };
