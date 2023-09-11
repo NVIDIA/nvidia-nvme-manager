@@ -214,14 +214,15 @@ void NVMeDevice::initialize()
 
               struct nvme_id_ctrl* id = (struct nvme_id_ctrl*)data.data();
 
-              self->Asset::manufacturer(self->getManufacture(id->vid));
+              self->Asset::manufacturer(self->getManufacture(id->vid), false);
               self->Asset::serialNumber(
-                  self->stripString(id->sn, sizeof(id->sn)));
-              self->Asset::model(self->stripString(id->mn, sizeof(id->mn)));
+                  self->stripString(id->sn, sizeof(id->sn)), false);
+              self->Asset::model(self->stripString(id->mn, sizeof(id->mn)),
+                                 false);
 
               std::string fr;
               fr.assign(id->fr, id->fr + 8);
-              self->Version::version(fr);
+              self->Version::version(fr, false);
 
               uint64_t drive_capacity[2];
               memcpy(&drive_capacity, id->tnvmcap, 16);
@@ -229,7 +230,7 @@ void NVMeDevice::initialize()
               /* 8 bytes presenting the drive capacity is enough to support all
                * drives outside market.
                */
-              self->Drive::capacity(drive_capacity[0]);
+              self->Drive::capacity(drive_capacity[0], false);
 
               // check the drive sanitize capability
               std::vector<EraseMethod> saniCap;
@@ -259,9 +260,9 @@ void NVMeDevice::initialize()
                 return;
             }
             self->Port::maxSpeed(
-                getMaxLinkSpeed(port->pcie.sls, port->pcie.mlw));
+                getMaxLinkSpeed(port->pcie.sls, port->pcie.mlw), false);
             self->Port::currentSpeed(
-                getCurrLinkSpeed(port->pcie.cls, port->pcie.nlw));
+                getCurrLinkSpeed(port->pcie.cls, port->pcie.nlw), false);
         });
 
     // get drive's location and form factor from Json file.
@@ -275,9 +276,9 @@ void NVMeDevice::initialize()
             if (eid == driveEid)
             {
                 auto loc = d["location"].get<std::string>();
-                Location::locationCode(loc);
+                Location::locationCode(loc, false);
                 auto formFactor = getDriveFormFactor(d["form_factor"].get<std::string>());
-                Drive::formFactor(formFactor);
+                Drive::formFactor(formFactor, false);
             }
         }
     }
@@ -296,19 +297,19 @@ void NVMeDevice::markStatus(std::string status)
     if (status == "critical")
     {
         assocs.emplace_back("health", status, objPath.c_str());
-        Health::health(HealthType::Critical);
+        Health::health(HealthType::Critical, false);
     }
     else if (status == "warning")
     {
         assocs.emplace_back("health", status, objPath.c_str());
-        Health::health(HealthType::Warning);
+        Health::health(HealthType::Warning, false);
     }
     else
     {
         Health::health(HealthType::OK);
     }
     assocs.emplace_back("chassis", "drive", driveLocation);
-    Associations::associations(assocs);
+    Associations::associations(assocs, false);
 }
 
 void NVMeDevice::markFunctional(bool functional)
@@ -318,8 +319,8 @@ void NVMeDevice::markFunctional(bool functional)
         // mark device state
         if (functional == false)
         {
-            OperationalStatus::functional(false);
-            OperationalStatus::state(OperationalStatus::StateType::Fault);
+            OperationalStatus::functional(false, false);
+            OperationalStatus::state(OperationalStatus::StateType::Fault, false);
             markStatus("critical");
 
             createLogEntry(conn, "ResourceEvent.1.0.ResourceErrorsDetected",
@@ -329,8 +330,8 @@ void NVMeDevice::markFunctional(bool functional)
         }
         else
         {
-            OperationalStatus::functional(true);
-            OperationalStatus::state(OperationalStatus::StateType::None);
+            OperationalStatus::functional(true, false);
+            OperationalStatus::state(OperationalStatus::StateType::None, false);
             markStatus("ok");
         }
     }
@@ -514,12 +515,12 @@ void NVMeDevice::pollDrive()
                            "ERR", err.value(), "MSG", err.message());
                 return;
               }
-              self->NVMeStatus::driveLifeUsed(std::to_string(ss->pdlu));
+              self->NVMeStatus::driveLifeUsed(std::to_string(ss->pdlu), false);
 
               // the percentage is allowed to exceed 100 based on the spec.
               auto percentage = (ss->pdlu > 100) ? 100 : ss->pdlu;
               self->sdbusplus::xyz::openbmc_project::Inventory::Item::server::
-                  Drive::predictedMediaLifeLeftPercent(100 - percentage);
+                  Drive::predictedMediaLifeLeftPercent(100 - percentage, false);
 
               self->markFunctional(ss->nss & 0x20);
 
@@ -543,18 +544,20 @@ void NVMeDevice::pollDrive()
               {
                   // the error indicator is from smart warning
                   self->NVMeStatus::backupDeviceFault(
-                      log->critical_warning &
-                      (NVME_SMART_CRIT_VOLATILE_MEMORY));
-                  self->NVMeStatus::capacityFault(log->critical_warning &
-                                                  (NVME_SMART_CRIT_SPARE));
+                      log->critical_warning & (NVME_SMART_CRIT_VOLATILE_MEMORY),
+                      false);
+                  self->NVMeStatus::capacityFault(
+                      log->critical_warning & (NVME_SMART_CRIT_SPARE), false);
                   self->NVMeStatus::temperatureFault(
-                      log->critical_warning & (NVME_SMART_CRIT_TEMPERATURE));
-                  self->NVMeStatus::degradesFault(log->critical_warning &
-                                                  (NVME_SMART_CRIT_DEGRADED));
-                  self->NVMeStatus::mediaFault(log->critical_warning &
-                                               (NVME_SMART_CRIT_MEDIA));
+                      log->critical_warning & (NVME_SMART_CRIT_TEMPERATURE),
+                      false);
+                  self->NVMeStatus::degradesFault(
+                      log->critical_warning & (NVME_SMART_CRIT_DEGRADED),
+                      false);
+                  self->NVMeStatus::mediaFault(
+                      log->critical_warning & (NVME_SMART_CRIT_MEDIA), false);
                   self->NVMeStatus::smartWarnings(
-                      std::to_string(log->critical_warning));
+                      std::to_string(log->critical_warning), false);
 
                   if (log->critical_warning != 0)
                   {
