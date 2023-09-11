@@ -183,6 +183,11 @@ class NVMeMiIntf
                                uint8_t slot, bool bpid,
                                std::function<void(const std::error_code&,
                                                   nvme_status_field)>&& cb) = 0;
+    virtual void adminSanitize(
+        nvme_mi_ctrl_t ctrl, nvme_sanitize_sanact sanact, uint8_t owpass,
+        uint32_t owpattern,
+        std::function<void(const std::error_code&, std::span<uint8_t>)>&&
+            cb) = 0;
 
     virtual void adminSecuritySend(
         nvme_mi_ctrl_t ctrl, uint8_t proto, uint16_t proto_specific,

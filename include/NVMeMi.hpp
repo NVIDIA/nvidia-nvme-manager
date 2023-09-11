@@ -29,6 +29,11 @@ class NVMeMi : public NVMeMiIntf, public std::enable_shared_from_this<NVMeMi>
                          std::function<void(const std::error_code&,
                                             std::span<uint8_t>)>&& cb) override;
 
+    void adminSanitize(nvme_mi_ctrl_t ctrl, nvme_sanitize_sanact sanact,
+                       uint8_t owpass, uint32_t owpattern,
+                       std::function<void(const std::error_code&,
+                                          std::span<uint8_t>)>&& cb) override;
+
     void adminFwCommit(
         nvme_mi_ctrl_t ctrl, nvme_fw_commit_ca action, uint8_t slot, bool bpid,
         std::function<void(const std::error_code&, nvme_status_field)>&& cb)

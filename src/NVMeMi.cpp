@@ -511,6 +511,82 @@ int getTelemetryLog(nvme_mi_ctrl_t ctrl, bool host, bool create,
     return 0;
 }
 
+void NVMeMi::adminSanitize(
+    nvme_mi_ctrl_t ctrl, nvme_sanitize_sanact sanact, uint8_t owpass,
+    uint32_t owpattern,
+    std::function<void(const std::error_code&, std::span<uint8_t>)>&& cb)
+{
+     if (!nvmeEP)
+    {
+        std::cerr << "nvme endpoint is invalid" << std::endl;
+        io.post([cb{std::move(cb)}]() {
+            cb(std::make_error_code(std::errc::no_such_device), {});
+        });
+        return;
+    }
+    try
+    {
+        post([ctrl, sanact, owpass, owpattern, self{shared_from_this()},
+              cb{std::move(cb)}]() {
+            int rc = 0;
+            std::vector<uint8_t> data(8);
+            struct nvme_sanitize_nvm_args args;
+            memset (&args, 0, sizeof(args));
+
+            args.args_size = sizeof(args);
+            args.sanact = sanact;
+            args.owpass = owpass;
+            args.nodas = 0x1;
+            args.ovrpat = owpattern;
+            args.result = (uint32_t *) data.data();
+
+            rc = nvme_mi_admin_sanitize_nvm(ctrl, &args);
+            printf("rc : %d\n", rc);
+            printf(" %x %x %x %x\n", data[0], data[1], data[2], data[3]);
+            if (rc < 0)
+            {
+                std::cerr << "[ addr: " << self->addr
+                          << ", eid: " << static_cast<int>(self->eid) << "]"
+                          << "fail to do nvme sanitize: "
+                          << std::strerror(errno) << std::endl;
+                self->io.post([cb{std::move(cb)}, last_errno{errno}]() {
+                    cb(std::make_error_code(static_cast<std::errc>(last_errno)), {});
+                });
+                return;
+            }
+            else if (rc > 0)
+            {
+                std::string_view errMsg =
+                    statusToString(static_cast<nvme_mi_resp_status>(rc));
+                std::cerr << "[ addr: " << self->addr
+                          << ", eid: " << static_cast<int>(self->eid) << "]"
+                          << "fail to do nvme sanitize: " << errMsg
+                          << std::endl;
+                self->io.post([cb{std::move(cb)}]() {
+                    cb(std::make_error_code(std::errc::bad_message), {});
+                });
+                return;
+            }
+
+            self->io.post([cb{std::move(cb)}, data{std::move(data)}]() mutable {
+                std::span<uint8_t> span{data.data(), data.size()};
+                cb({}, span);
+            });
+        });
+    }
+    catch (const std::runtime_error& e)
+    {
+        std::cerr << "[ addr: " << addr
+                  << ", eid: " << static_cast<int>(eid) << "]" << e.what()
+                  << std::endl;
+        io.post([cb{std::move(cb)}]() {
+            cb(std::make_error_code(std::errc::no_such_device), {});
+        });
+        return;
+    }
+    return;
+}
+
 void NVMeMi::adminGetLogPage(
     nvme_mi_ctrl_t ctrl, nvme_cmd_get_log_lid lid, uint32_t nsid, uint8_t lsp,
     uint16_t lsi,
