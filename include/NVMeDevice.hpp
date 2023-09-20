@@ -19,6 +19,7 @@
 #include <xyz/openbmc_project/Inventory/Decorator/LocationCode/server.hpp>
 #include <xyz/openbmc_project/Inventory/Item/Drive/server.hpp>
 #include <xyz/openbmc_project/Common/Progress/server.hpp>
+#include <xyz/openbmc_project/Nvme/SecureErase/server.hpp>
 #include <NVMeMi.hpp>
 
 using Item = sdbusplus::xyz::openbmc_project::Inventory::server::Item;
@@ -37,10 +38,11 @@ using NVMeStatus = sdbusplus::xyz::openbmc_project::Nvme::server::Status;
 using Location = sdbusplus::xyz::openbmc_project::Inventory::Decorator::server::LocationCode;
 using StorageController = sdbusplus::xyz::openbmc_project::Inventory::Item::server::StorageController;
 using Progress = sdbusplus::xyz::openbmc_project::Common::server::Progress;
+using SecureErase = sdbusplus::xyz::openbmc_project::Nvme::server::SecureErase;
 
 using NvmeInterfaces = sdbusplus::server::object::object<
     Item, StorageController, Port, Drive, Health, OperationalStatus, Asset,
-    Version, NVMeStatus, Location, Associations, Progress>;
+    Version, NVMeStatus, Location, Associations, Progress, SecureErase>;
 using AssociationList =
     std::vector<std::tuple<std::string, std::string, std::string>>;
 

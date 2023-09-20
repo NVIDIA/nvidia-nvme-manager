@@ -246,7 +246,7 @@ void NVMeDevice::initialize()
               {
                   saniCap.push_back(EraseMethod::CryptoErase);
               }
-              self->Drive::sanitizeCapability(saniCap, false);
+              self->SecureErase::sanitizeCapability(saniCap, false);
               self->setNodmmas(id->sanicap);
             });
     });
@@ -584,7 +584,7 @@ void NVMeDevice::updateSanitizeStatus(EraseMethod type)
 void NVMeDevice::erase(uint16_t overwritePasses, EraseMethod type)
 {
 
-    auto cap = Drive::sanitizeCapability();
+    auto cap = SecureErase::sanitizeCapability();
     if (std::find(cap.begin(), cap.end(), type) == cap.end())
     {
         lg2::error("sanitize method is not supported\n");
