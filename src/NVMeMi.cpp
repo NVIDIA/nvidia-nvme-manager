@@ -23,7 +23,6 @@ NVMeMi::NVMeMi(boost::asio::io_context& io,
 {
     // reset to unassigned nid/eid and endpoint
     nid = -1;
-    eid = 0;
     mctpPath.erase();
     nvmeEP = nullptr;
 

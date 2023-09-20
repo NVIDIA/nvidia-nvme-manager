@@ -1,5 +1,6 @@
 #include <NVMeDevice.hpp>
 #include <MCTPDiscovery.hpp>
+
 #include <boost/asio/steady_timer.hpp>
 
 #include <iostream>
@@ -11,8 +12,7 @@ static constexpr bool debug = true;
 
 const constexpr char* mctpEpsPath = "/xyz/openbmc_project/mctp";
 
-//static NVMEMap nvmeDeviceMap;
-
+std::unordered_map<uint8_t, std::shared_ptr<NVMeDevice>> driveMap;
 static void handleMCTPEndpoints(
     boost::asio::io_service& io, sdbusplus::asio::object_server& objectServer,
     std::shared_ptr<sdbusplus::asio::connection>& dbusConnection,
@@ -20,7 +20,7 @@ static void handleMCTPEndpoints(
 {
     for (const auto& [path, epData] : mctpEndpoints)
     {
-        int nvmeCap= 0;
+        bool nvmeCap= false;
         size_t eid = 0;
         std::vector<uint8_t> addr;
         auto ep = epData.find(NVMeDevice::mctpEpInterface);
@@ -38,7 +38,7 @@ static void handleMCTPEndpoints(
             auto msgTypes = std::get<std::vector<uint8_t>>(findTypes->second);
             std::vector<uint8_t>::iterator it = std::find(msgTypes.begin(), msgTypes.end(), NVME_MI_MSGTYPE_NVME & 0x7F ); 
             if (it != msgTypes.end()) {
-                nvmeCap = 1;
+                nvmeCap = true;
             }
         }
         auto sockInfo = epData.find("xyz.openbmc_project.Common.UnixSocket");
@@ -55,18 +55,18 @@ static void handleMCTPEndpoints(
         }
 
         addr.push_back(0);
-        std::shared_ptr<NVMeDevice> DrivePtr = std::make_shared<NVMeDevice>(
-             io, objectServer, dbusConnection, eid, std::move(addr), std::string("/xyz/openbmc_project/inventory/drive/1"));
+        auto DrivePtr = std::make_shared<NVMeDevice>(
+             io, objectServer, dbusConnection, eid, std::move(addr), std::string("/xyz/openbmc_project/inventory/drive/"+ std::to_string(eid)));
 
-        DrivePtr->initialize();
-        DrivePtr->pollDrive();
-
+        // put drive object to map in order to implement drive removal. 
+        driveMap.emplace(eid, DrivePtr);
     }
-    /*
-    for (const auto& [_, context] : nvmeDeviceMap)
+    
+    for (const auto& [_, context] : driveMap)
     {
-        context->pollNVMeDevices();
-    }*/
+        context->initialize();
+        context->pollDrive();
+    }
 }
 
 void createDrives(boost::asio::io_service& io,
@@ -105,7 +105,7 @@ static void interfaceRemoved(sdbusplus::message::message& message)
         auto obj = findEid->second;
         auto eid = std::get<size_t>(obj);
         lg2::info("Remove Drive:{EID}.", "EID", eid);
-        // remove the drive by Eid
+        // Todo: implement it for drive hotplug.
     }
 }
 
@@ -121,7 +121,6 @@ int main()
 
     io.post([&]() { createDrives(io, objectServer, bus);});
 
-    // need to change
     boost::asio::steady_timer filterTimer(io);
     std::function<void(sdbusplus::message::message&)> eventHandler =
         [&filterTimer, &io, &objectServer,
@@ -137,7 +136,7 @@ int main()
 
                 if (ec)
                 {
-                    std::cerr << "Error: " << ec.message() << "\n";
+                    lg2::error("Error: {MSG}", "MSG", ec.message());
                     return;
                 }
 

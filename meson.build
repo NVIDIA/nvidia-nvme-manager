@@ -71,20 +71,6 @@ default_deps = [
     libnvme_mi_dep,
 ]
 
-#utils_a = static_library(
-#    'utils_a',
-#    ['src/Utils.cpp', 'src/DrivePaths.cpp'],
-#    dependencies: default_deps,
-#    implicit_include_directories: false,
-#    include_directories: 'include',
-#)
-#
-#utils_dep = declare_dependency(
-#    link_with: [ utils_a ],
-#    dependencies: [ sdbusplus ],
-#)
-#
-
 subdir('include')
 subdir('service_files')
 subdir('src')
