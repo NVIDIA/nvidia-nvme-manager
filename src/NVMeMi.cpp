@@ -32,7 +32,9 @@ NVMeMi::NVMeMi(boost::asio::io_context& io,
         throw std::runtime_error("invalid NVMe root");
     }
 
-    // only create one share worker for all threads
+    addr.assign(sockName.begin() + 1, sockName.end());
+
+    // only create one share worker for all drives
     auto res = workerMap.find(0);
     if (res == workerMap.end() || res->second.expired())
     {
