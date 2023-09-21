@@ -10,11 +10,16 @@
 #include <filesystem>
 
 const std::string driveFailureResolution{
-    "Ensure all cables are properly and securely connected. Ensure all drives are fully seated. Replace the defective cables, drive, or both."};
+    "Ensure all cables are properly and securely connected. Ensure all drives \
+     are fully seated. Replace the defective cables, drive, or both."};
 const std::string drivePfaResolution{
-    "If this drive is not part of a fault-tolerant volume, first back up all data, then replace the drive and restore all data afterward. If this drive is part of a fault-tolerant volume, replace this drive as soon as possible as long as the health is OK"};
+    "If this drive is not part of a fault-tolerant volume, first back up all \
+     data, then replace the drive and restore all data afterward. If this \
+     drive is part of a fault-tolerant volume, replace this drive as soon as \
+     possible as long as the health is OK"};
 
-const std::string redfishDrivePathPrefix{"/redfish/v1/Systems/System_0/Storage/1/Drives/"};
+const std::string redfishDrivePathPrefix{
+    "/redfish/v1/Systems/System_0/Storage/1/Drives/"};
 const std::string redfishDriveName{"NVMe Drive"};
 
 const std::string driveConfig{"/usr/share/nvidia-nvme-manager/drive.json"};
@@ -46,7 +51,7 @@ NVMeDevice::NVMeDevice(boost::asio::io_service& io,
     nvmeIntf = NVMeIntf::create<NVMeMi>(io, conn, addr, eid);
     intf = std::get<std::shared_ptr<NVMeMiIntf>>(nvmeIntf.getInferface());
 }
-    
+
 inline Drive::DriveFormFactor getDriveFormFactor(std::string form)
 {
     if (form == "Drive3_5")
@@ -525,16 +530,16 @@ void NVMeDevice::pollDrive()
 
               self->markFunctional(ss->nss & 0x20);
 
-              lg2::error(" NVM composite temp. : {VAL}", "VAL", ss->ctemp);
             });
 
         miIntf->adminGetLogPage(
             self->ctrl, NVME_LOG_LID_SMART, 0xFFFFFFFF, 0, 0,
             [self](const std::error_code &ec, std::span<uint8_t> smart) {
               if (ec) {
-
-                lg2::error("fail to query SMART for the nvme subsystem {ERR}:{MSG}", "ERR", ec.value(), "MSG", ec.message());
-                return;
+                  lg2::error(
+                      "fail to query SMART for the nvme subsystem {ERR}:{MSG}",
+                      "ERR", ec.value(), "MSG", ec.message());
+                  return;
               }
 
               struct nvme_smart_log *log;
