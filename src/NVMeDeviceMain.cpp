@@ -55,17 +55,19 @@ static void handleMCTPEndpoints(
         }
 
         addr.push_back(0);
+        lg2::info("Drive is added on EID: {EID}", "EID", eid);
         auto DrivePtr = std::make_shared<NVMeDevice>(
              io, objectServer, dbusConnection, eid, std::move(addr), std::string("/xyz/openbmc_project/inventory/drive/"+ std::to_string(eid)));
 
         // put drive object to map in order to implement drive removal. 
         driveMap.emplace(eid, DrivePtr);
     }
+    // wait for worker ready to handle NVMe-MI commands.
+    std::this_thread::sleep_for(std::chrono::seconds(2));
     
     for (const auto& [_, context] : driveMap)
     {
         context->initialize();
-        context->pollDrive();
     }
 }
 

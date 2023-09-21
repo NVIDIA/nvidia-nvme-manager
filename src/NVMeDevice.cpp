@@ -249,7 +249,9 @@ void NVMeDevice::initialize()
               self->SecureErase::sanitizeCapability(saniCap, false);
               self->setNodmmas(id->sanicap);
             });
-    });
+            // nvme_mi_ctrl is needed inside pollDrive
+            self->pollDrive();
+        });
     intf->miPCIePortInformation(
         [self{shared_from_this()}](__attribute__((unused))
                                    const std::error_code& err,
@@ -422,7 +424,6 @@ void NVMeDevice::pollDrive()
         // try to re-initialize the drive
         if (self->presence == false) {
             self->initialize();
-            self->pollDrive();
             return;
         }
 
@@ -601,6 +602,7 @@ void NVMeDevice::erase(uint16_t overwritePasses, EraseMethod type)
                 __attribute__((unused)) std::span<uint8_t> status) {
                 if (ec)
                 {
+                    self->Progress::status(OperationStatus::Failed);
                     lg2::error("fail to do sanitize(Overwite)");
                     return;
                 }
@@ -616,6 +618,7 @@ void NVMeDevice::erase(uint16_t overwritePasses, EraseMethod type)
                 __attribute__((unused)) std::span<uint8_t> status) {
                 if (ec)
                 {
+                    self->Progress::status(OperationStatus::Failed);
                     lg2::error("fail to do sanitize(CryptoErase)");
                     return;
                 }
@@ -631,6 +634,7 @@ void NVMeDevice::erase(uint16_t overwritePasses, EraseMethod type)
                 __attribute__((unused)) std::span<uint8_t> status) {
                 if (ec)
                 {
+                    self->Progress::status(OperationStatus::Failed);
                     lg2::error("fail to do sanitize(BlockErase)");
                     return;
                 }

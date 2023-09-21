@@ -31,7 +31,18 @@ NVMeMi::NVMeMi(boost::asio::io_context& io,
     {
         throw std::runtime_error("invalid NVMe root");
     }
-    worker = std::make_shared<Worker>();
+
+    // only create one share worker for all threads
+    auto res = workerMap.find(0);
+    if (res == workerMap.end() || res->second.expired())
+    {
+        worker = std::make_shared<Worker>();
+        workerMap[0] = worker;
+    }
+    else
+    {
+        worker = res->second.lock();
+    }
 
     nvmeEP = nvme_mi_open_mctp(nvmeRoot,(char *) sockName.data(), eid);
     if (nvmeEP == nullptr)
@@ -540,8 +551,6 @@ void NVMeMi::adminSanitize(
             args.result = (uint32_t *) data.data();
 
             rc = nvme_mi_admin_sanitize_nvm(ctrl, &args);
-            printf("rc : %d\n", rc);
-            printf(" %x %x %x %x\n", data[0], data[1], data[2], data[3]);
             if (rc < 0)
             {
                 std::cerr << "[ addr: " << self->addr
@@ -559,8 +568,7 @@ void NVMeMi::adminSanitize(
                     statusToString(static_cast<nvme_mi_resp_status>(rc));
                 std::cerr << "[ addr: " << self->addr
                           << ", eid: " << static_cast<int>(self->eid) << "]"
-                          << "fail to do nvme sanitize: " << errMsg
-                          << std::endl;
+                          << "fail to do nvme sanitize: " << errMsg <<" rc:" << std::to_string(rc) << std::endl;
                 self->io.post([cb{std::move(cb)}]() {
                     cb(std::make_error_code(std::errc::bad_message), {});
                 });
