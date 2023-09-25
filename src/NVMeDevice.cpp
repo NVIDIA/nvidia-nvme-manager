@@ -433,7 +433,7 @@ void NVMeDevice::pollDrive()
         }
 
         auto miIntf = self->getIntf();
-        if (self->Drive::operation() == OperationType::Sanitize)
+        if (self->Operation::operation() == OperationType::Sanitize)
         {
             miIntf->adminGetLogPage(
                 self->ctrl, NVME_LOG_LID_SANITIZE, 0, 0, 0,
@@ -584,7 +584,7 @@ void NVMeDevice::updateSanitizeStatus(EraseMethod type)
     setEstimateTime(0);
     Progress::status(OperationStatus::InProgress);
     setEraseType(type);
-    Drive::operation(OperationType::Sanitize, false);
+    Operation::operation(OperationType::Sanitize, false);
 }
 
 void NVMeDevice::erase(uint16_t overwritePasses, EraseMethod type)
