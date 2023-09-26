@@ -316,7 +316,7 @@ void NVMeDevice::markStatus(std::string status)
         Health::health(HealthType::OK);
     }
     assocs.emplace_back("chassis", "drive", driveLocation);
-    Associations::associations(assocs, false);
+    Associations::associations(assocs);
 }
 
 void NVMeDevice::markFunctional(bool functional)
