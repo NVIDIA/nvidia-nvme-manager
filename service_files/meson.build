@@ -1,5 +1,5 @@
 unit_files = [
-    ['xyz.openbmc_project.nvme.service'],
+    ['nvidia-nvme-manager.service'],
 ]
 
 foreach tuple : unit_files
