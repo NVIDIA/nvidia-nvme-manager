@@ -4,6 +4,9 @@
 #include <sdbusplus/asio/object_server.hpp>
 #include <boost/endian.hpp>
 
+#include <phosphor-logging/elog-errors.hpp>
+#include <phosphor-logging/lg2.hpp>
+
 #include "NVMeMi.hpp"
 
 #include <cerrno>
@@ -54,10 +57,9 @@ NVMeMi::NVMeMi(boost::asio::io_context& io,
         // MCTPd won't expect to delete the ep object, just to erase the record
         // here.
         nvmeEP = nullptr;
-        std::cerr << "[ addr: " << addr << "]"
-                  << "can't open MCTP endpoint "
-                  << std::to_string(nid) + ":" + std::to_string(eid)
-                  << std::endl;
+        auto str = std::to_string(nid) + ":" + std::to_string(eid);
+        lg2::error("[addr:{ADDR}] can't open MCTP endpoint {MSG}", "ADDR", addr,
+                   "MSG", str);
     }
 }
 
@@ -135,9 +137,8 @@ std::error_code NVMeMi::try_post(std::function<void(void)>&& func)
     }
     catch (const std::runtime_error& e)
     {
-        std::cerr << "[ addr: " << addr
-                  << ", eid: " << static_cast<int>(eid) << "]" << e.what()
-                  << std::endl;
+        lg2::error("[addr:{ADDR}, eid:{EID}] {MSG}", "ADDR", addr, "EID",
+                   static_cast<int>(eid), "MSG", e.what());
         return std::make_error_code(std::errc::no_such_device);
     }
     return std::error_code();
@@ -149,9 +150,8 @@ void NVMeMi::miPCIePortInformation(
 {
     if (!nvmeEP)
     {
-        std::cerr << "[ addr: " << addr
-                  << ", eid: " << static_cast<int>(eid) << "]"
-                  << "nvme endpoint is invalid" << std::endl;
+        lg2::error("[addr:{ADDR}, eid:{EID}] vme endpoint is invalid", "ADDR",
+                   addr, "EID", static_cast<int>(eid));
 
         io.post([cb{std::move(cb)}]() {
             cb(std::make_error_code(std::errc::no_such_device), nullptr);
@@ -166,11 +166,11 @@ void NVMeMi::miPCIePortInformation(
             auto rc = nvme_mi_mi_read_mi_data_subsys(self->nvmeEP, &ss_info);
             if (rc < 0)
             {
+                lg2::error(
+                    "[addr:{ADDR}, eid:{EID}] mi_read_mi_data_subsys: {ERR}",
+                    "ADDR", self->addr, "EID", static_cast<int>(self->eid),
+                    "ERR", std::strerror(errno));
 
-                std::cerr << "[ addr: " << self->addr
-                          << ", eid: " << static_cast<int>(self->eid) << "]"
-                          << "fail to mi_read_mi_data_subsys: "
-                          << std::strerror(errno) << std::endl;
                 self->io.post([cb{std::move(cb)}, last_errno{errno}]() {
                     cb(std::make_error_code(static_cast<std::errc>(last_errno)),
                        nullptr);
@@ -181,10 +181,11 @@ void NVMeMi::miPCIePortInformation(
             {
                 std::string_view errMsg =
                     statusToString(static_cast<nvme_mi_resp_status>(rc));
-                std::cerr << "[ addr: " << self->addr
-                          << ", eid: " << static_cast<int>(self->eid) << "]"
-                          << "fail to mi_read_mi_data_subsys: " << errMsg
-                          << std::endl;
+                lg2::error(
+                    "[addr:{ADDR}, eid:{EID}] mi_read_mi_data_subsys: {ERR}",
+                    "ADDR", self->addr, "EID", static_cast<int>(self->eid),
+                    "ERR", errMsg);
+
                 self->io.post([cb{std::move(cb)}]() {
                     cb(std::make_error_code(std::errc::bad_message), nullptr);
                 });
@@ -199,10 +200,10 @@ void NVMeMi::miPCIePortInformation(
                 {
                     std::string_view errMsg =
                         statusToString(static_cast<nvme_mi_resp_status>(rc));
-                    std::cerr << "[ addr: " << self->addr
-                              << ", eid: " << static_cast<int>(self->eid) << "]"
-                              << "fail to mi_read_mi_data_subsys: " << errMsg
-                              << std::endl;
+                    lg2::error(
+                        "[addr:{ADDR}, eid:{EID}] mi_read_mi_data_subsys: {ERR}",
+                        "ADDR", self->addr, "EID", static_cast<int>(self->eid),
+                        "ERR", errMsg);
                     self->io.post([cb{std::move(cb)}]() {
                         cb(std::make_error_code(std::errc::bad_message),
                            nullptr);
@@ -224,9 +225,8 @@ void NVMeMi::miPCIePortInformation(
     }
     catch (const std::runtime_error& e)
     {
-        std::cerr << "[ addr: " << addr
-                  << ", eid: " << static_cast<int>(eid) << "]" << e.what()
-                  << std::endl;
+        lg2::error("[addr:{ADDR}, eid:{EID}]  {MSG}", "ADDR", addr, "EID",
+                   static_cast<int>(eid), "MSG", e.what());
         io.post([cb{std::move(cb)}]() {
             cb(std::make_error_code(std::errc::no_such_device), {});
         });
@@ -240,10 +240,8 @@ void NVMeMi::miSubsystemHealthStatusPoll(
 {
     if (!nvmeEP)
     {
-        std::cerr << "[ addr: " << addr
-                  << ", eid: " << static_cast<int>(eid) << "]"
-                  << "nvme endpoint is invalid" << std::endl;
-
+        lg2::error("[addr:{ADDR}, eid:{EID}] nvme endpoint is invalid ", "ADDR",
+                   addr, "EID", static_cast<int>(eid));
         io.post([cb{std::move(cb)}]() {
             cb(std::make_error_code(std::errc::no_such_device), nullptr);
         });
@@ -258,11 +256,11 @@ void NVMeMi::miSubsystemHealthStatusPoll(
                                                               true, &ss_health);
             if (rc < 0)
             {
+                lg2::error(
+                    "[addr:{ADDR}, eid:{EID}] subsystem_health_status_poll: {ERR}",
+                    "ADDR", self->addr, "EID", static_cast<int>(self->eid),
+                    "ERR", std::strerror(errno));
 
-                std::cerr << "[ addr: " << self->addr
-                          << ", eid: " << static_cast<int>(self->eid) << "]"
-                          << "fail to subsystem_health_status_poll: "
-                          << std::strerror(errno) << std::endl;
                 self->io.post([cb{std::move(cb)}, last_errno{errno}]() {
                     cb(std::make_error_code(static_cast<std::errc>(last_errno)),
                        nullptr);
@@ -273,10 +271,11 @@ void NVMeMi::miSubsystemHealthStatusPoll(
             {
                 std::string_view errMsg =
                     statusToString(static_cast<nvme_mi_resp_status>(rc));
-                std::cerr << "[ addr: " << self->addr
-                          << ", eid: " << static_cast<int>(self->eid) << "]"
-                          << "fail to subsystem_health_status_poll: " << errMsg
-                          << std::endl;
+
+                lg2::error(
+                    "[addr:{ADDR}, eid:{EID}] subsystem_health_status_poll:{MSG}",
+                    "ADDR", self->addr, "EID", static_cast<int>(self->eid),
+                    "MSG", errMsg);
                 self->io.post([cb{std::move(cb)}]() {
                     cb(std::make_error_code(std::errc::bad_message), nullptr);
                 });
@@ -291,9 +290,8 @@ void NVMeMi::miSubsystemHealthStatusPoll(
     }
     catch (const std::runtime_error& e)
     {
-        std::cerr << "[ addr: " << addr
-                  << ", eid: " << static_cast<int>(eid) << "]" << e.what()
-                  << std::endl;
+        lg2::error("[addr:{ADDR}, eid:{EID}] {MSG}", "ADDR", addr, "EID",
+                   static_cast<int>(eid), "MSG", e.what());
         io.post([cb{std::move(cb)}]() {
             cb(std::make_error_code(std::errc::no_such_device), {});
         });
@@ -307,7 +305,7 @@ void NVMeMi::miScanCtrl(std::function<void(const std::error_code&,
 {
     if (!nvmeEP)
     {
-        std::cerr << "nvme endpoint is invalid" << std::endl;
+        lg2::error("nvme endpoint is invalid");
 
         io.post([cb{std::move(cb)}]() {
             cb(std::make_error_code(std::errc::no_such_device), {});
@@ -321,10 +319,10 @@ void NVMeMi::miScanCtrl(std::function<void(const std::error_code&,
             int rc = nvme_mi_scan_ep(self->nvmeEP, true);
             if (rc < 0)
             {
-                std::cerr << "[ addr: " << self->addr
-                          << ", eid: " << static_cast<int>(self->eid) << "]"
-                          << "fail to scan controllers: "
-                          << std::strerror(errno) << std::endl;
+                lg2::error(
+                    "[addr:{ADDR}, eid:{EID}] fail to scan controllers:{ERR}",
+                    "ADDR", self->addr, "EID", static_cast<int>(self->eid),
+                    "ERR", std::strerror(errno));
                 self->io.post([cb{std::move(cb)}, last_errno{errno}]() {
                     cb(std::make_error_code(static_cast<std::errc>(last_errno)), {});
                 });
@@ -334,10 +332,10 @@ void NVMeMi::miScanCtrl(std::function<void(const std::error_code&,
             {
                 std::string_view errMsg =
                     statusToString(static_cast<nvme_mi_resp_status>(rc));
-                std::cerr << "[ addr: " << self->addr
-                          << ", eid: " << static_cast<int>(self->eid) << "]"
-                          << "fail to scan controllers: " << errMsg
-                          << std::endl;
+                lg2::error(
+                    "[addr:{ADDR}, eid:{EID}] fail to scan controllers: {MSG}",
+                    "ADDR", self->addr, "EID", static_cast<int>(self->eid),
+                    "MSG", errMsg);
                 self->io.post([cb{std::move(cb)}]() {
                     cb(std::make_error_code(std::errc::bad_message), {});
                 });
@@ -356,9 +354,8 @@ void NVMeMi::miScanCtrl(std::function<void(const std::error_code&,
     }
     catch (const std::runtime_error& e)
     {
-        std::cerr << "[ addr: " << addr
-                  << ", eid: " << static_cast<int>(eid) << "]" << e.what()
-                  << std::endl;
+        lg2::error("[addr:{ADDR}, eid:{EID}] {MSG}", "ADDR", addr, "EID",
+                   static_cast<int>(eid), "MSG", e.what());
         io.post([cb{std::move(cb)}]() {
             cb(std::make_error_code(std::errc::no_such_device), {});
         });
@@ -372,7 +369,7 @@ void NVMeMi::adminIdentify(
 {
     if (!nvmeEP)
     {
-        std::cerr << "nvme endpoint is invalid" << std::endl;
+        lg2::error("nvme endpoint is invalid");
         io.post([cb{std::move(cb)}]() {
             cb(std::make_error_code(std::errc::no_such_device), {});
         });
@@ -427,10 +424,10 @@ void NVMeMi::adminIdentify(
             }
             if (rc < 0)
             {
-                std::cerr << "[ addr: " << self->addr
-                          << ", eid: " << static_cast<int>(self->eid) << "]"
-                          << "fail to do nvme identify: "
-                          << std::strerror(errno) << std::endl;
+                lg2::error(
+                    "[addr:{ADDR}, eid:{EID}] fail to do nvme identify: {ERR}",
+                    "ADDR", self->addr, "EID", static_cast<int>(self->eid),
+                    "ERR", std::strerror(errno));
                 self->io.post([cb{std::move(cb)}, last_errno{errno}]() {
                     cb(std::make_error_code(static_cast<std::errc>(last_errno)), {});
                 });
@@ -440,10 +437,10 @@ void NVMeMi::adminIdentify(
             {
                 std::string_view errMsg =
                     statusToString(static_cast<nvme_mi_resp_status>(rc));
-                std::cerr << "[ addr: " << self->addr
-                          << ", eid: " << static_cast<int>(self->eid) << "]"
-                          << "fail to do nvme identify: " << errMsg
-                          << std::endl;
+                lg2::error(
+                    "[addr:{ADDR}, eid:{EID}] fail to do nvme identify: {MSG}",
+                    "ADDR", self->addr, "EID", static_cast<int>(self->eid),
+                    "MSG", errMsg);
                 self->io.post([cb{std::move(cb)}]() {
                     cb(std::make_error_code(std::errc::bad_message), {});
                 });
@@ -458,9 +455,8 @@ void NVMeMi::adminIdentify(
     }
     catch (const std::runtime_error& e)
     {
-        std::cerr << "[ addr: " << addr
-                  << ", eid: " << static_cast<int>(eid) << "]" << e.what()
-                  << std::endl;
+        lg2::error("[addr:{ADDR}, eid:{EID}] {MSG}", "ADDR", addr, "EID",
+                   static_cast<int>(eid), "MSG", e.what());
         io.post([cb{std::move(cb)}]() {
             cb(std::make_error_code(std::errc::no_such_device), {});
         });
@@ -493,7 +489,7 @@ int getTelemetryLog(nvme_mi_ctrl_t ctrl, bool host, bool create,
         rc = nvme_mi_admin_get_log_create_telemetry_host(ctrl, &log);
         if (rc)
         {
-            std::cerr << "failed to create telemetry host log" << std::endl;
+            lg2::error("failed to create telemetry host log");
             return rc;
         }
         return 0;
@@ -503,8 +499,8 @@ int getTelemetryLog(nvme_mi_ctrl_t ctrl, bool host, bool create,
 
     if (rc)
     {
-        std::cerr << "failed to retain telemetry log for "
-                  << (host ? "host" : "ctrl") << std::endl;
+        auto str = (host ? "host" : "ctrl");
+        lg2::error("failed to retain telemetry log for {MSG}", "MSG", str);
         return rc;
     }
 
@@ -516,8 +512,8 @@ int getTelemetryLog(nvme_mi_ctrl_t ctrl, bool host, bool create,
     rc = func(ctrl, false, 0, data.size(), data.data());
     if (rc)
     {
-        std::cerr << "failed to get full telemetry log for "
-                  << (host ? "host" : "ctrl") << std::endl;
+        auto str = (host ? "host" : "ctrl");
+        lg2::error("failed to get full telemetry log for {MSG}", "MSG", str);
         return rc;
     }
     return 0;
@@ -530,7 +526,7 @@ void NVMeMi::adminSanitize(
 {
      if (!nvmeEP)
     {
-        std::cerr << "nvme endpoint is invalid" << std::endl;
+        lg2::error("nvme endpoint is invalid");
         io.post([cb{std::move(cb)}]() {
             cb(std::make_error_code(std::errc::no_such_device), {});
         });
@@ -555,10 +551,10 @@ void NVMeMi::adminSanitize(
             rc = nvme_mi_admin_sanitize_nvm(ctrl, &args);
             if (rc < 0)
             {
-                std::cerr << "[ addr: " << self->addr
-                          << ", eid: " << static_cast<int>(self->eid) << "]"
-                          << "fail to do nvme sanitize: "
-                          << std::strerror(errno) << std::endl;
+                lg2::error(
+                    "[addr:{ADDR}, eid:{EID}] fail to do nvme sanitize: {ERR}",
+                    "ADDR", self->addr, "EID", static_cast<int>(self->eid),
+                    "ERR", std::strerror(errno));
                 self->io.post([cb{std::move(cb)}, last_errno{errno}]() {
                     cb(std::make_error_code(static_cast<std::errc>(last_errno)), {});
                 });
@@ -568,9 +564,10 @@ void NVMeMi::adminSanitize(
             {
                 std::string_view errMsg =
                     statusToString(static_cast<nvme_mi_resp_status>(rc));
-                std::cerr << "[ addr: " << self->addr
-                          << ", eid: " << static_cast<int>(self->eid) << "]"
-                          << "fail to do nvme sanitize: " << errMsg <<" rc:" << std::to_string(rc) << std::endl;
+                lg2::error(
+                    "[addr:{ADDR}, eid:{EID}] fail to do nvme sanitize: {MSG} rc: {RC}",
+                    "ADDR", self->addr, "EID", static_cast<int>(self->eid),
+                    "MSG", errMsg, "RC", std::to_string(rc));
                 self->io.post([cb{std::move(cb)}]() {
                     cb(std::make_error_code(std::errc::bad_message), {});
                 });
@@ -585,9 +582,8 @@ void NVMeMi::adminSanitize(
     }
     catch (const std::runtime_error& e)
     {
-        std::cerr << "[ addr: " << addr
-                  << ", eid: " << static_cast<int>(eid) << "]" << e.what()
-                  << std::endl;
+        lg2::error("[addr:{ADDR}, eid:{EID}] {MSG}", "ADDR", addr, "EID",
+                   static_cast<int>(eid), "MSG", e.what());
         io.post([cb{std::move(cb)}]() {
             cb(std::make_error_code(std::errc::no_such_device), {});
         });
@@ -603,9 +599,8 @@ void NVMeMi::adminGetLogPage(
 {
     if (!nvmeEP)
     {
-        std::cerr << "[ addr: " << addr
-                  << ", eid: " << static_cast<int>(eid) << "]"
-                  << "nvme endpoint is invalid" << std::endl;
+        lg2::error("[addr:{ADDR}, eid:{EID}] nvme endpoint is invalid", "ADDR",
+                   addr, "EID", static_cast<int>(eid));
         io.post([cb{std::move(cb)}]() {
             cb(std::make_error_code(std::errc::no_such_device), {});
         });
@@ -635,10 +630,10 @@ void NVMeMi::adminGetLogPage(
                     rc = nvme_mi_admin_get_log_error(ctrl, num, false, log);
                     if (rc)
                     {
-                        std::cerr
-                            << "[ addr: " << self->addr
-                            << ", eid: " << static_cast<int>(self->eid) << "]"
-                            << "fail to get error log" << std::endl;
+                        lg2::error(
+                            "[addr:{ADDR}, eid:{EID}] fail to get error log",
+                            "ADDR", self->addr, "EID",
+                            static_cast<int>(self->eid));
                         break;
                     }
                 }
@@ -651,10 +646,10 @@ void NVMeMi::adminGetLogPage(
                     rc = nvme_mi_admin_get_log_smart(ctrl, nsid, false, log);
                     if (rc)
                     {
-                        std::cerr
-                            << "[ addr: " << self->addr
-                            << ", eid: " << static_cast<int>(self->eid) << "]"
-                            << "fail to get smart log" << std::endl;
+                        lg2::error(
+                            "[addr:{ADDR}, eid:{EID}] fail to get smart log",
+                            "ADDR", self->addr, "EID",
+                            static_cast<int>(self->eid));
                         break;
                     }
                 }
@@ -667,10 +662,10 @@ void NVMeMi::adminGetLogPage(
                     rc = nvme_mi_admin_get_log_fw_slot(ctrl, false, log);
                     if (rc)
                     {
-                        std::cerr
-                            << "[ addr: " << self->addr
-                            << ", eid: " << static_cast<int>(self->eid) << "]"
-                            << "fail to get firmware slot" << std::endl;
+                        lg2::error(
+                            "[addr:{ADDR}, eid:{EID}] fail to get firmware slot",
+                            "ADDR", self->addr, "EID",
+                            static_cast<int>(self->eid));
                         break;
                     }
                 }
@@ -687,11 +682,10 @@ void NVMeMi::adminGetLogPage(
                                                            log);
                     if (rc)
                     {
-                        std::cerr
-                            << "[ addr: " << self->addr
-                            << ", eid: " << static_cast<int>(self->eid) << "]"
-                            << "fail to get cmd supported and effects log"
-                            << std::endl;
+                        lg2::error(
+                            "[addr:{ADDR}, eid:{EID}] fail to get cmd supported and effects log",
+                            "ADDR", self->addr, "EID",
+                            static_cast<int>(self->eid));
                         break;
                     }
                 }
@@ -704,10 +698,10 @@ void NVMeMi::adminGetLogPage(
                     rc = nvme_mi_admin_get_log_device_self_test(ctrl, log);
                     if (rc)
                     {
-                        std::cerr
-                            << "[ addr: " << self->addr
-                            << ", eid: " << static_cast<int>(self->eid) << "]"
-                            << "fail to get device self test log" << std::endl;
+                        lg2::error(
+                            "[addr:{ADDR}, eid:{EID}] fail to get device self test log",
+                            "ADDR", self->addr, "EID",
+                            static_cast<int>(self->eid));
                         break;
                     }
                 }
@@ -721,11 +715,11 @@ void NVMeMi::adminGetLogPage(
                         nvme_mi_admin_get_log_changed_ns_list(ctrl, false, log);
                     if (rc)
                     {
-                        std::cerr
-                            << "[ addr: " << self->addr
-                            << ", eid: " << static_cast<int>(self->eid) << "]"
-                            << "fail to get changed namespace list"
-                            << std::endl;
+
+                        lg2::error(
+                            "[addr:{ADDR}, eid:{EID}] fail to get changed namespace list",
+                            "ADDR", self->addr, "EID",
+                            static_cast<int>(self->eid));
                         break;
                     }
                 }
@@ -749,10 +743,10 @@ void NVMeMi::adminGetLogPage(
                         }
                         else
                         {
-                            std::cerr << "[ addr: " << self->addr << ", eid: "
-                                      << static_cast<int>(self->eid) << "]"
-                                      << "invalid lsp for telemetry host log"
-                                      << std::endl;
+                            lg2::error(
+                                "[addr:{ADDR}, eid:{EID}] invalid lsp for telemetry host log",
+                                "ADDR", self->addr, "EID",
+                                static_cast<int>(self->eid));
                             rc = -1;
                             errno = EINVAL;
                             break;
@@ -777,12 +771,10 @@ void NVMeMi::adminGetLogPage(
                         nvme_mi_admin_get_log_reservation(ctrl, false, log);
                     if (rc)
                     {
-                        std::cerr
-                            << "[ addr: " << self->addr
-                            << ", eid: " << static_cast<int>(self->eid) << "]"
-                            << "fail to get reservation "
-                               "notification log"
-                            << std::endl;
+                        lg2::error(
+                            "[addr:{ADDR}, eid:{EID}] fail to get reservation notification log",
+                            "ADDR", self->addr, "EID",
+                            static_cast<int>(self->eid));
                         break;
                     }
                 }
@@ -796,19 +788,19 @@ void NVMeMi::adminGetLogPage(
                     int rc = nvme_mi_admin_get_log_sanitize(ctrl, false, log);
                     if (rc)
                     {
-                        std::cerr
-                            << "[ addr: " << self->addr
-                            << ", eid: " << static_cast<int>(self->eid) << "]"
-                            << "fail to get sanitize status log" << std::endl;
+                        lg2::error(
+                            "[addr:{ADDR}, eid:{EID}] fail to get sanitize status log",
+                            "ADDR", self->addr, "EID",
+                            static_cast<int>(self->eid));
                         break;
                     }
                 }
                 break;
                 default:
                 {
-                    std::cerr << "[ addr: " << self->addr
-                              << ", eid: " << static_cast<int>(self->eid) << "]"
-                              << "unknown lid for GetLogPage" << std::endl;
+                    lg2::error(
+                        "[addr:{ADDR}, eid:{EID}] unknown lid for GetLogPage",
+                        "ADDR", self->addr, "EID", static_cast<int>(self->eid));
                     rc = -1;
                     errno = EINVAL;
                 }
@@ -816,10 +808,10 @@ void NVMeMi::adminGetLogPage(
 
             if (rc < 0)
             {
-                std::cerr << "[ addr: " << self->addr
-                          << ", eid: " << static_cast<int>(self->eid) << "]"
-                          << "fail to get log page: " << std::strerror(errno)
-                          << std::endl;
+                lg2::error(
+                    "[addr:{ADDR}, eid:{EID}] fail to get log page {ERR}",
+                    "ADDR", self->addr, "EID", static_cast<int>(self->eid),
+                    "ERR", std::strerror(errno));
                 self->io.post([cb{std::move(cb)}, last_errno{errno}]() {
                     cb(std::make_error_code(static_cast<std::errc>(last_errno)), {});
                 });
@@ -829,9 +821,11 @@ void NVMeMi::adminGetLogPage(
             {
                 std::string_view errMsg =
                     statusToString(static_cast<nvme_mi_resp_status>(rc));
-                std::cerr << "[ addr: " << self->addr
-                          << ", eid: " << static_cast<int>(self->eid) << "]"
-                          << "fail to get log pag: " << errMsg << std::endl;
+
+                lg2::error(
+                    "[addr:{ADDR}, eid:{EID}] fail to get log page: {MSG}",
+                    "ADDR", self->addr, "EID", static_cast<int>(self->eid),
+                    "MSG", errMsg);
                 self->io.post([cb{std::move(cb)}]() {
                     cb(std::make_error_code(std::errc::bad_message), {});
                     return;
@@ -846,9 +840,9 @@ void NVMeMi::adminGetLogPage(
     }
     catch (const std::runtime_error& e)
     {
-        std::cerr << "[ addr: " << addr
-                  << ", eid: " << static_cast<int>(eid) << "]"
-                  << "NVMeMi adminGetLogPage throws: " << e.what() << std::endl;
+        lg2::error(
+            "[addr:{ADDR}, eid:{EID}] NVMeMi adminGetLogPage throws: {MSG}",
+            "ADDR", addr, "EID", static_cast<int>(eid), "MSG", e.what());
         io.post([cb{std::move(cb)}]() {
             cb(std::make_error_code(std::errc::no_such_device), {});
         });
@@ -864,9 +858,8 @@ void NVMeMi::adminXfer(
 {
     if (!nvmeEP)
     {
-        std::cerr << "[ addr: " << addr
-                  << ", eid: " << static_cast<int>(eid) << "]"
-                  << "nvme endpoint is invalid" << std::endl;
+        lg2::error("[addr:{ADDR}, eid:{EID}] nvme endpoint is invalid", "ADDR",
+                   addr, "EID", static_cast<int>(eid));
         io.post([cb{std::move(cb)}]() {
             cb(std::make_error_code(std::errc::no_such_device), {}, {});
         });
@@ -906,9 +899,9 @@ void NVMeMi::adminXfer(
 
             if (rc < 0)
             {
-                std::cerr << "[ addr: " << self->addr
-                          << ", eid: " << static_cast<int>(self->eid) << "]"
-                          << "failed to nvme_mi_admin_xfer" << std::endl;
+                lg2::error(
+                    "[addr:{ADDR}, eid:{EID}] failed to nvme_mi_admin_xfer",
+                    "ADDR", self->addr, "EID", static_cast<int>(self->eid));
                 self->io.post([cb{std::move(cb)}, last_errno{errno}]() {
                     cb(std::make_error_code(static_cast<std::errc>(last_errno)), {},
                        {});
@@ -931,9 +924,8 @@ void NVMeMi::adminXfer(
     }
     catch (const std::runtime_error& e)
     {
-        std::cerr << "[ addr: " << addr
-                  << ", eid: " << static_cast<int>(eid) << "]" << e.what()
-                  << std::endl;
+        lg2::error("[addr:{ADDR}, eid:{EID}] {MSG}", "ADDR", addr, "EID",
+                   static_cast<int>(eid),"MSG", e.what());
         io.post([cb{std::move(cb)}]() {
             cb(std::make_error_code(std::errc::no_such_device), {}, {});
         });
@@ -947,9 +939,8 @@ void NVMeMi::adminFwCommit(
 {
     if (!nvmeEP)
     {
-        std::cerr << "[ addr: " << addr
-                  << ", eid: " << static_cast<int>(eid) << "]"
-                  << "nvme endpoint is invalid" << std::endl;
+        lg2::error("[addr:{ADDR}, eid:{EID}] nvme endpoint is invalid", "ADDR",
+                   addr, "EID", static_cast<int>(eid));
         io.post([cb{std::move(cb)}]() {
             cb(std::make_error_code(std::errc::no_such_device),
                nvme_status_field::NVME_SC_MASK);
@@ -969,11 +960,10 @@ void NVMeMi::adminFwCommit(
             int rc = nvme_mi_admin_fw_commit(ctrl, &args);
             if (rc < 0)
             {
-
-                std::cerr << "[ addr: " << self->addr
-                          << ", eid: " << static_cast<int>(self->eid) << "]"
-                          << "fail to nvme_mi_admin_fw_commit: "
-                          << std::strerror(errno) << std::endl;
+                lg2::error(
+                    "[addr:{ADDR}, eid:{EID}] fail to nvme_mi_admin_fw_commit: {ERR}",
+                    "ADDR", self->addr, "EID", static_cast<int>(self->eid),
+                    "ERR", std::strerror(errno));
                 self->io.post([cb{std::move(cb)}, last_errno{errno}]() {
                     cb(std::make_error_code(static_cast<std::errc>(last_errno)),
                        nvme_status_field::NVME_SC_MASK);
@@ -995,9 +985,8 @@ void NVMeMi::adminFwCommit(
                     default:
                         std::string_view errMsg = statusToString(
                             static_cast<nvme_mi_resp_status>(rc));
-                        std::cerr
-                            << "fail to nvme_mi_admin_fw_commit: " << errMsg
-                            << std::endl;
+                        lg2::error("fail to nvme_mi_admin_fw_commit: {MSG} ",
+                                    "MSG", errMsg);
                         self->io.post([rc, cb{std::move(cb)}]() {
                             cb(std::make_error_code(std::errc::bad_message),
                                static_cast<nvme_status_field>(rc));
@@ -1009,9 +998,8 @@ void NVMeMi::adminFwCommit(
     }
     catch (const std::runtime_error& e)
     {
-        std::cerr << "[ addr: " << addr
-                  << ", eid: " << static_cast<int>(eid) << "]" << e.what()
-                  << std::endl;
+        lg2::error("[addr:{ADDR}, eid:{EID}] {MSG}", "ADDR", addr, "EID",
+                   static_cast<int>(eid), "MSG", e.what());
         io.post([cb{std::move(cb)}]() {
             cb(std::make_error_code(std::errc::no_such_device),
                nvme_status_field::NVME_SC_MASK);
@@ -1046,9 +1034,9 @@ void NVMeMi::adminSecuritySend(
     });
     if (post_err)
     {
-        std::cerr << "[ addr: " << addr
-                  << ", eid: " << static_cast<int>(eid) << "]"
-                  << "adminSecuritySend post failed: " << post_err << std::endl;
+        lg2::error(
+            "[addr:{ADDR}, eid:{EID}] adminSecuritySend post failed: {MSG}",
+            "ADDR", addr, "EID", static_cast<int>(eid), "MSG", post_err.message());
         io.post([cb{std::move(cb)}, post_err]() { cb(post_err, -1); });
     }
 }
@@ -1083,10 +1071,10 @@ void NVMeMi::adminSecurityReceive(
         int status = nvme_mi_admin_security_recv(ctrl, &args);
         if (args.data_len > maxNVMeMILength)
         {
-            std::cerr << "[ addr: " << self->addr
-                      << ", eid: " << static_cast<int>(self->eid) << "]"
-                      << "nvme_mi_admin_security_send returned excess data, "
-                      << args.data_len << std::endl;
+            lg2::error(
+                "[addr:{ADDR}, eid:{EID}] nvme_mi_admin_security_send returned excess data, {LEN}",
+                "ADDR", self->addr, "EID", static_cast<int>(self->eid), "LEN",
+                args.data_len);
             self->io.post([cb]() {
                 cb(std::make_error_code(std::errc::protocol_error), -1, {});
             });
@@ -1103,10 +1091,9 @@ void NVMeMi::adminSecurityReceive(
     });
     if (post_err)
     {
-        std::cerr << "[ addr: " << addr
-                  << ", eid: " << static_cast<int>(eid) << "]"
-                  << "adminSecurityReceive post failed: " << post_err
-                  << std::endl;
+        lg2::error(
+            "[addr:{ADDR}, eid:{EID}] adminSecuritySend post failed: {MSG}",
+            "ADDR", addr, "EID", static_cast<int>(eid), "MSG", post_err.message());
         io.post([cb{std::move(cb)}, post_err]() { cb(post_err, -1, {}); });
     }
 }
