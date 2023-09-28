@@ -37,8 +37,8 @@ inline void createLogEntry(std::shared_ptr<sdbusplus::asio::connection>& conn,
     }
     else
     {
-        lg2::error("Message Registry messageID is not recognised", "MESSAGEID",
-                   messageID);
+        lg2::error("Message Registry messageID is not recognised: {MESSAGEID}",
+                   "MESSAGEID", messageID);
         return;
     }
 
@@ -59,8 +59,9 @@ inline void createLogEntry(std::shared_ptr<sdbusplus::asio::connection>& conn,
         [](boost::system::error_code ec) {
             if (ec)
             {
-                lg2::error("error while logging message registry: ",
-                           "ERROR_MESSAGE", ec.message());
+                lg2::error(
+                    "error while logging message registry: {ERROR_MESSAGE}",
+                    "ERROR_MESSAGE", ec.message());
                 return;
             }
         },
