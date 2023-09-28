@@ -39,7 +39,7 @@ NVMeDevice::NVMeDevice(boost::asio::io_service& io,
                    NvmeInterfaces::action::defer_emit),
     std::enable_shared_from_this<NVMeDevice>(), conn(conn),
     objServer(objectServer), scanTimer(io), driveFunctional(false),
-    smartWarning(0xff), objPath(path), eid(eid)
+    smartWarning(0xff), inProgress(false), objPath(path), eid(eid)
 {
     std::filesystem::path p(path);
 
@@ -50,6 +50,7 @@ NVMeDevice::NVMeDevice(boost::asio::io_service& io,
 
     nvmeIntf = NVMeIntf::create<NVMeMi>(io, conn, addr, eid);
     intf = std::get<std::shared_ptr<NVMeMiIntf>>(nvmeIntf.getInferface());
+
 }
 
 inline Drive::DriveFormFactor getDriveFormFactor(std::string form)
@@ -423,7 +424,7 @@ void NVMeDevice::pollDrive()
         }
         else if (errorCode)
         {
-            lg2::error("Error: {MSG}\n", "MSG", errorCode.message());
+            lg2::error("Error: {MSG}", "MSG", errorCode.message());
             return;
         }
         // try to re-initialize the drive
@@ -455,11 +456,13 @@ void NVMeDevice::pollDrive()
                     {
                         self->Progress::status(OperationStatus::Completed);
                         self->Progress::progress(100);
+                        self->inProgress = false;
                     }
                     else if (res == NVME_SANITIZE_SSTAT_STATUS_COMPLETED_FAILED)
                     {
                         self->Progress::status(OperationStatus::Failed);
                         self->Progress::progress(0);
+                        self->inProgress = false;
                     }
                     if (res != NVME_SANITIZE_SSTAT_STATUS_IN_PROGESS)
                     {
@@ -573,7 +576,8 @@ void NVMeDevice::pollDrive()
               }
               self->updateSmartWarning(log->critical_warning);
               boost::multiprecision::uint128_t powerOnHours;
-              memcpy((void *)&powerOnHours, log->power_on_hours, 16);
+              memcpy((void*)&powerOnHours, log->power_on_hours,
+                     sizeof(powerOnHours));
             });
         self->pollDrive();
     });
@@ -583,17 +587,23 @@ void NVMeDevice::updateSanitizeStatus(EraseMethod type)
 {
     setEstimateTime(0);
     Progress::status(OperationStatus::InProgress);
+    inProgress = true;
     setEraseType(type);
     Operation::operation(OperationType::Sanitize, false);
 }
 
 void NVMeDevice::erase(uint16_t overwritePasses, EraseMethod type)
 {
+    if (inProgress)
+    {
+        throw sdbusplus::xyz::openbmc_project::Common::Error::NotAllowed();
+    }
 
     auto cap = SecureErase::sanitizeCapability();
     if (std::find(cap.begin(), cap.end(), type) == cap.end())
     {
-        lg2::error("sanitize method is not supported\n");
+        lg2::error("sanitize method is not supported");
+        return;
     }
 
     if (type == EraseMethod::Overwrite)
@@ -608,6 +618,7 @@ void NVMeDevice::erase(uint16_t overwritePasses, EraseMethod type)
                 if (ec)
                 {
                     self->Progress::status(OperationStatus::Failed);
+                    self->inProgress = false;
                     lg2::error("fail to do sanitize(Overwite)");
                     return;
                 }
@@ -624,6 +635,7 @@ void NVMeDevice::erase(uint16_t overwritePasses, EraseMethod type)
                 if (ec)
                 {
                     self->Progress::status(OperationStatus::Failed);
+                    self->inProgress = false;
                     lg2::error("fail to do sanitize(CryptoErase)");
                     return;
                 }
@@ -640,6 +652,7 @@ void NVMeDevice::erase(uint16_t overwritePasses, EraseMethod type)
                 if (ec)
                 {
                     self->Progress::status(OperationStatus::Failed);
+                    self->inProgress = false;
                     lg2::error("fail to do sanitize(BlockErase)");
                     return;
                 }
@@ -650,5 +663,4 @@ void NVMeDevice::erase(uint16_t overwritePasses, EraseMethod type)
 
 NVMeDevice::~NVMeDevice()
 {
-    std::cout <<"~NVMEDevice"<<std::endl;
 }

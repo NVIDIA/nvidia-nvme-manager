@@ -21,6 +21,7 @@
 #include <xyz/openbmc_project/Common/Progress/server.hpp>
 #include <xyz/openbmc_project/Nvme/SecureErase/server.hpp>
 #include <xyz/openbmc_project/Nvme/Operation/server.hpp>
+#include <xyz/openbmc_project/Common/error.hpp>
 #include <NVMeMi.hpp>
 
 using Item = sdbusplus::xyz::openbmc_project::Inventory::server::Item;
@@ -149,6 +150,7 @@ class NVMeDevice :
     AssociationList assocs;
     nvme_mi_ctrl_t ctrl;
     bool presence;
+    bool inProgress;
     std::string objPath;
     uint8_t eid;
     // flag of no-deallocate modifies meida after sanitize(NODMMAS)
