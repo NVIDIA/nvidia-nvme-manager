@@ -1,0 +1,8 @@
+#pragma once
+
+#include <cstdint>
+
+// clang-format off
+constexpr const char *driveLocation = @PLATFORM_DRIVE_LOCATION@;
+
+// clang-format on

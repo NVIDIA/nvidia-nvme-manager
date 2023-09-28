@@ -1,0 +1,1 @@
+option ('platform_drive_location', type : 'string', value : '/xyz/openbmc_project/inventory/system/chassis/Baseboard_0', description : 'which board will  NVMe drives located in the system ')
