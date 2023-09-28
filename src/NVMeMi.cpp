@@ -49,7 +49,7 @@ NVMeMi::NVMeMi(boost::asio::io_context& io,
         worker = res->second.lock();
     }
 
-    nvmeEP = nvme_mi_open_mctp(nvmeRoot,(char *) sockName.data(), eid);
+    nvmeEP = nvme_mi_open_libmctp(nvmeRoot, 0, (char *) sockName.data(), eid);
     if (nvmeEP == nullptr)
     {
         nid = -1;
