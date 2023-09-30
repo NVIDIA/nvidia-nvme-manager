@@ -50,6 +50,7 @@ NVMeDevice::NVMeDevice(boost::asio::io_service& io,
 
     nvmeIntf = NVMeIntf::create<NVMeMi>(io, conn, addr, eid);
     intf = std::get<std::shared_ptr<NVMeMiIntf>>(nvmeIntf.getInferface());
+    NvmeInterfaces::emit_object_added();
 
 }
 
