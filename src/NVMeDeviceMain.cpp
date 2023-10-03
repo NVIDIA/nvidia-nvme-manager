@@ -128,7 +128,7 @@ int main()
     auto bus = std::make_shared<sdbusplus::asio::connection>(io);
     bus->request_name("xyz.openbmc_project.NVMeDevice");
     sdbusplus::asio::object_server objectServer(bus, true);
-    objectServer.add_manager("/xyz/openbmc_project/drive");
+    objectServer.add_manager("/xyz/openbmc_project/inventory/drive");
 
     std::vector<std::unique_ptr<sdbusplus::bus::match::match>> matches;
 
