@@ -10,13 +10,13 @@
 #include <filesystem>
 
 const std::string driveFailureResolution{
-    "Ensure all cables are properly and securely connected. Ensure all drives \
-     are fully seated. Replace the defective cables, drive, or both."};
+    "Ensure all cables are properly and securely connected. Ensure all drives "
+    "are fully seated. Replace the defective cables, drive, or both."};
 const std::string drivePfaResolution{
-    "If this drive is not part of a fault-tolerant volume, first back up all \
-     data, then replace the drive and restore all data afterward. If this \
-     drive is part of a fault-tolerant volume, replace this drive as soon as \
-     possible as long as the health is OK"};
+    "If this drive is not part of a fault-tolerant volume, first back up all "
+    "data, then replace the drive and restore all data afterward. If this "
+    "drive is part of a fault-tolerant volume, replace this drive as soon as "
+    "possible as long as the health is OK"};
 
 const std::string redfishDrivePathPrefix{
     "/redfish/v1/Systems/System_0/Storage/1/Drives/"};
@@ -39,7 +39,9 @@ NVMeDevice::NVMeDevice(boost::asio::io_service& io,
                    NvmeInterfaces::action::defer_emit),
     std::enable_shared_from_this<NVMeDevice>(), conn(conn),
     objServer(objectServer), scanTimer(io), driveFunctional(false),
-    smartWarning(0xff), inProgress(false), objPath(path), eid(eid)
+    smartWarning(0xff), inProgress(false), objPath(path), eid(eid),
+    backupDeviceErr(false), temperatureErr(false), degradesErr(false),
+    mediaErr(false), capacityErr(false)
 {
     std::filesystem::path p(path);
 
@@ -549,33 +551,61 @@ void NVMeDevice::pollDrive()
               struct nvme_smart_log *log;
               log = (struct nvme_smart_log *) smart.data();
 
-              auto sw = self->getSmartWarning();
-              if (log->critical_warning != sw)
+              auto cw = log->critical_warning;
+
+              // overwrite the warning triggered from Dbus
+              if (self->backupDeviceErr)
+              {
+                  cw |= (NVME_SMART_CRIT_VOLATILE_MEMORY);
+              }
+              if (self->capacityErr)
+              {
+                  cw |= (NVME_SMART_CRIT_SPARE);
+              }
+              if (self->temperatureErr)
+              {
+                  cw |= (NVME_SMART_CRIT_TEMPERATURE);
+              }
+              if (self->degradesErr)
+              {
+                  cw |= (NVME_SMART_CRIT_DEGRADED);
+              }
+              if (self->mediaErr)
+              {
+                  cw |= (NVME_SMART_CRIT_MEDIA);
+              }
+
+              if (cw != self->smartWarning)
               {
                   // the error indicator is from smart warning
                   self->NVMeStatus::backupDeviceFault(
-                      log->critical_warning & (NVME_SMART_CRIT_VOLATILE_MEMORY),
-                      false);
-                  self->NVMeStatus::capacityFault(
-                      log->critical_warning & (NVME_SMART_CRIT_SPARE), false);
-                  self->NVMeStatus::temperatureFault(
-                      log->critical_warning & (NVME_SMART_CRIT_TEMPERATURE),
-                      false);
-                  self->NVMeStatus::degradesFault(
-                      log->critical_warning & (NVME_SMART_CRIT_DEGRADED),
-                      false);
-                  self->NVMeStatus::mediaFault(
-                      log->critical_warning & (NVME_SMART_CRIT_MEDIA), false);
-                  self->NVMeStatus::smartWarnings(
-                      std::to_string(log->critical_warning), false);
+                      cw & (NVME_SMART_CRIT_VOLATILE_MEMORY), false);
 
-                  if (log->critical_warning != 0)
+                  self->NVMeStatus::capacityFault(cw & (NVME_SMART_CRIT_SPARE),
+                                                  false);
+
+                  self->NVMeStatus::temperatureFault(
+                      cw & (NVME_SMART_CRIT_TEMPERATURE), false);
+
+                  self->NVMeStatus::degradesFault(
+                      cw & (NVME_SMART_CRIT_DEGRADED), false);
+
+                  self->NVMeStatus::mediaFault(cw & ((NVME_SMART_CRIT_MEDIA)),
+                                               false);
+
+                  self->NVMeStatus::smartWarnings(std::to_string(cw), false);
+
+                  if (cw != 0)
                   {
                       self->markStatus("warning");
                   }
-                  self->generateRedfishEventbySmart(log->critical_warning);
+                  else
+                  {
+                      self->markStatus("ok");
+                  }
+                  self->generateRedfishEventbySmart(cw);
               }
-              self->updateSmartWarning(log->critical_warning);
+              self->smartWarning = cw;
               boost::multiprecision::uint128_t powerOnHours;
               memcpy((void*)&powerOnHours, log->power_on_hours,
                      sizeof(powerOnHours));

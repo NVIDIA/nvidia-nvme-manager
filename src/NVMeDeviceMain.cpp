@@ -8,8 +8,6 @@
 #include <regex>
 #include <vector>
 
-static constexpr bool debug = true;
-
 const constexpr char* mctpEpsPath = "/xyz/openbmc_project/mctp";
 
 std::unordered_map<uint8_t, std::shared_ptr<NVMeDevice>> driveMap;
