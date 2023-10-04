@@ -82,16 +82,6 @@ class NVMeDevice :
         return intf;
     }
 
-    uint8_t getSmartWarning()
-    {
-        return smartWarning;
-    }
-
-    void updateSmartWarning(uint8_t newValue)
-    {
-        smartWarning = newValue;
-    }
-    
     bool getDriveFunctional()
     {
         return driveFunctional;
@@ -135,8 +125,33 @@ class NVMeDevice :
     void updatePercent(uint16_t endTime);
     void erase(uint16_t overwritePasses, EraseMethod eraseType);
 
+    bool backupDeviceFault(bool value)
+    {
+        backupDeviceErr = value;
+        return value;
+    }
+    bool temperatureFault(bool value)
+    {
+        temperatureErr = value;
+        return value;
+    }
+    bool degradesFault(bool value)
+    {
+        degradesErr = value;
+        return value;
+    }
+    bool mediaFault(bool value)
+    {
+        mediaErr = value;
+        return value;
+    }
+    bool capacityFault(bool value)
+    {
+        capacityErr = value;
+        return value;
+    }
+
   private:
-    std::shared_ptr<sdbusplus::asio::dbus_interface> driveInterface;
     std::shared_ptr<sdbusplus::asio::connection> conn;
     sdbusplus::asio::object_server& objServer;
     boost::asio::steady_timer scanTimer;
@@ -157,5 +172,12 @@ class NVMeDevice :
     uint32_t nodmmas;
     EraseMethod eraseType;
     uint16_t estimatedTime;
+
+    // triggered the smart error from Dbus.
+    bool backupDeviceErr;
+    bool temperatureErr;
+    bool degradesErr;
+    bool mediaErr;
+    bool capacityErr;
 
 };
