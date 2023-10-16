@@ -62,7 +62,7 @@ class NVMeDevice :
     NVMeDevice(boost::asio::io_service& io,
                sdbusplus::asio::object_server& objectServer,
                std::shared_ptr<sdbusplus::asio::connection>& dbusConnection,
-               uint8_t, std::vector<uint8_t>, std::string path);
+               uint8_t, uint32_t, std::vector<uint8_t>, std::string path);
     ~NVMeDevice();
 
     NVMeDevice& operator=(const NVMeDevice& other) = delete;
@@ -121,8 +121,14 @@ class NVMeDevice :
     {
         estimatedTime = time;
     }
+    uint32_t getI2CBus()
+    {
+        return bus;
+    }
 
     void updatePercent(uint16_t endTime);
+    void updateLocation(std::string loc);
+    void updateFormFactor(std::string form);
     void erase(uint16_t overwritePasses, EraseMethod eraseType);
 
     bool backupDeviceFault(bool value)
@@ -168,6 +174,8 @@ class NVMeDevice :
     bool inProgress;
     std::string objPath;
     uint8_t eid;
+    uint32_t bus;
+
     // flag of no-deallocate modifies meida after sanitize(NODMMAS)
     uint32_t nodmmas;
     EraseMethod eraseType;

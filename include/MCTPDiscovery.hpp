@@ -25,7 +25,7 @@ const constexpr char* inventoryPath = "/xyz/openbmc_project/inventory";
 using BasicVariantType =
     std::variant<std::vector<std::string>, std::vector<uint8_t>, std::string,
                  int64_t, uint64_t, int32_t, uint32_t, int16_t,
-                 uint16_t, uint8_t>;
+                 uint16_t, uint8_t, AssociationList>;
 using Properties =
     boost::container::flat_map<std::string, BasicVariantType>;
 using DbusObject = boost::container::flat_map<std::string, Properties>;
@@ -38,12 +38,6 @@ using GetSubTreeType = std::vector<
 using Association = std::tuple<std::string, std::string, std::string>;
 using AssociationList =
     std::vector<std::tuple<std::string, std::string, std::string>>;
-/*
-bool getMctpEpInfo(
-    const std::string& type,
-    const std::shared_ptr<sdbusplus::asio::connection>& dbusConnection,
-    ManagedObjectType& resp);
-*/
 
 void createAssociation(
     std::shared_ptr<sdbusplus::asio::dbus_interface>& association,
@@ -75,10 +69,10 @@ void createInventoryAssoc(
     const std::shared_ptr<sdbusplus::asio::dbus_interface>& association,
     const std::string& path);
 
-struct getMctpEpInfo :
-    std::enable_shared_from_this<getMctpEpInfo>
+struct getObjects :
+    std::enable_shared_from_this<getObjects>
 {
-    getMctpEpInfo(
+    getObjects(
         std::shared_ptr<sdbusplus::asio::connection> connection,
         std::function<void(ManagedObjectType& resp)>&& callbackFunc) :
         dbusConnection(std::move(connection)),
@@ -92,7 +86,7 @@ struct getMctpEpInfo :
         {
             retries = 5;
         }
-        std::shared_ptr<getMctpEpInfo> self = shared_from_this();
+        std::shared_ptr<getObjects> self = shared_from_this();
 
         self->dbusConnection->async_method_call(
             [self, path, interface, owner,
@@ -135,7 +129,7 @@ struct getMctpEpInfo :
             retries = 5;
         }
 
-        std::shared_ptr<getMctpEpInfo> self = shared_from_this();
+        std::shared_ptr<getObjects> self = shared_from_this();
         dbusConnection->async_method_call(
             [self, interfaces, retries](const boost::system::error_code ec,
                                         const GetSubTreeType& ret) {
@@ -169,10 +163,31 @@ struct getMctpEpInfo :
                     }
                     const std::string& owner = objDict.begin()->first;
 
+                    uint8_t num = 0;
                     for (const std::string& interface : objDict.begin()->second)
                     {
                         // anything that starts with a requested configuration
                         // is good
+                        if (std::find_if(
+                                interfaces.begin(), interfaces.end(),
+                                [interface](const std::string& possible) {
+                                    return boost::starts_with(interface,
+                                                              possible);
+                                }) != interfaces.end())
+                        {
+                            num ++;
+                        }
+                    }
+                    // satisfy all interfaces the caller specified.
+                    if (num != interfaces.size())
+                    {
+                        continue;
+                    }
+
+                    // only collect the data in the interfaces the caller
+                    // specified.
+                    for (const std::string& interface : objDict.begin()->second)
+                    {
                         if (std::find_if(
                                 interfaces.begin(), interfaces.end(),
                                 [interface](const std::string& possible) {
@@ -190,7 +205,7 @@ struct getMctpEpInfo :
             "/", 0, interfaces);
     }
 
-    ~getMctpEpInfo()
+    ~getObjects()
     {
         callback(respData);
     }
