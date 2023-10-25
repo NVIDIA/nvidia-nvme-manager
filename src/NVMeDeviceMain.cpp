@@ -217,13 +217,15 @@ int main()
 {
     boost::asio::io_service io;
     auto bus = std::make_shared<sdbusplus::asio::connection>(io);
-    bus->request_name("xyz.openbmc_project.NVMeDevice");
     sdbusplus::asio::object_server objectServer(bus, true);
     objectServer.add_manager("/xyz/openbmc_project/inventory/drive");
 
     std::vector<std::unique_ptr<sdbusplus::bus::match::match>> matches;
 
-    io.post([&]() { createDrives(io, objectServer, bus);});
+    io.post([&]() { 
+        createDrives(io, objectServer, bus);
+        bus->request_name("xyz.openbmc_project.NVMeDevice");
+        });
 
     boost::asio::steady_timer filterTimer(io);
     std::function<void(sdbusplus::message::message&)> emHandler =

@@ -52,7 +52,6 @@ NVMeDevice::NVMeDevice(boost::asio::io_service& io,
 
     nvmeIntf = NVMeIntf::create<NVMeMi>(io, conn, addr, eid);
     intf = std::get<std::shared_ptr<NVMeMiIntf>>(nvmeIntf.getInferface());
-    NvmeInterfaces::emit_object_added();
 
 }
 
@@ -206,8 +205,10 @@ void NVMeDevice::initialize()
 {
     presence = 0;
 
-    Drive::type(DriveType::SSD);
-    Drive::protocol(DriveProtocol::NVMe);
+    Drive::type(DriveType::SSD, true);
+    Drive::protocol(DriveProtocol::NVMe, true);
+
+    NvmeInterfaces::emit_object_added();
 
     intf->miScanCtrl([self{shared_from_this()}](
                          const std::error_code& ec,
@@ -216,11 +217,11 @@ void NVMeDevice::initialize()
         {
             lg2::error("fail to scan controllers for the nvme subsystem {ERR}: {MSG}", "ERR", ec.value(), "MSG", ec.message());
             self->presence = false;
-            self->Item::present(false);
+            self->Item::present(false, true);
             return;
         }
         self->presence = true;
-        self->Item::present(true);
+        self->Item::present(true, true);
 
         self->ctrl = ctrlList.back();
         self->getIntf()->adminIdentify(
@@ -235,15 +236,15 @@ void NVMeDevice::initialize()
 
               struct nvme_id_ctrl* id = (struct nvme_id_ctrl*)data.data();
 
-              self->Asset::manufacturer(self->getManufacture(id->vid), false);
+              self->Asset::manufacturer(self->getManufacture(id->vid), true);
               self->Asset::serialNumber(
-                  self->stripString(id->sn, sizeof(id->sn)), false);
+                  self->stripString(id->sn, sizeof(id->sn)), true);
               self->Asset::model(self->stripString(id->mn, sizeof(id->mn)),
-                                 false);
+                                 true);
 
               std::string fr;
               fr.assign(id->fr, id->fr + 8);
-              self->Version::version(fr, false);
+              self->Version::version(fr, true);
 
               uint64_t drive_capacity[2];
               memcpy(&drive_capacity, id->tnvmcap, 16);
@@ -251,7 +252,7 @@ void NVMeDevice::initialize()
               /* 8 bytes presenting the drive capacity is enough to support all
                * drives outside market.
                */
-              self->Drive::capacity(drive_capacity[0], false);
+              self->Drive::capacity(drive_capacity[0], true);
 
               // check the drive sanitize capability
               std::vector<EraseMethod> saniCap;
@@ -267,7 +268,7 @@ void NVMeDevice::initialize()
               {
                   saniCap.push_back(EraseMethod::CryptoErase);
               }
-              self->SecureErase::sanitizeCapability(saniCap, false);
+              self->SecureErase::sanitizeCapability(saniCap, true);
               self->setNodmmas(id->sanicap);
             });
             // nvme_mi_ctrl is needed inside pollDrive
@@ -283,9 +284,9 @@ void NVMeDevice::initialize()
                 return;
             }
             self->Port::maxSpeed(
-                getMaxLinkSpeed(port->pcie.sls, port->pcie.mlw), false);
+                getMaxLinkSpeed(port->pcie.sls, port->pcie.mlw), true);
             self->Port::currentSpeed(
-                getCurrLinkSpeed(port->pcie.cls, port->pcie.nlw), false);
+                getCurrLinkSpeed(port->pcie.cls, port->pcie.nlw), true);
         });
 }
 
@@ -296,16 +297,16 @@ void NVMeDevice::markStatus(std::string status)
     if (status == "critical")
     {
         assocs.emplace_back("health", status, objPath.c_str());
-        Health::health(HealthType::Critical, false);
+        Health::health(HealthType::Critical, true);
     }
     else if (status == "warning")
     {
         assocs.emplace_back("health", status, objPath.c_str());
-        Health::health(HealthType::Warning, false);
+        Health::health(HealthType::Warning, true);
     }
     else
     {
-        Health::health(HealthType::OK);
+        Health::health(HealthType::OK, true);
     }
     assocs.emplace_back("chassis", "drive", driveLocation);
     Associations::associations(assocs);
@@ -318,8 +319,8 @@ void NVMeDevice::markFunctional(bool functional)
         // mark device state
         if (functional == false)
         {
-            OperationalStatus::functional(false, false);
-            OperationalStatus::state(OperationalStatus::StateType::Fault, false);
+            OperationalStatus::functional(false, true);
+            OperationalStatus::state(OperationalStatus::StateType::Fault, true);
             markStatus("critical");
 
             createLogEntry(conn, "ResourceEvent.1.0.ResourceErrorsDetected",
@@ -329,8 +330,8 @@ void NVMeDevice::markFunctional(bool functional)
         }
         else
         {
-            OperationalStatus::functional(true, false);
-            OperationalStatus::state(OperationalStatus::StateType::None, false);
+            OperationalStatus::functional(true, true);
+            OperationalStatus::state(OperationalStatus::StateType::None, true);
             markStatus("ok");
         }
     }
@@ -515,12 +516,12 @@ void NVMeDevice::pollDrive()
                            "ERR", err.value(), "MSG", err.message());
                 return;
               }
-              self->NVMeStatus::driveLifeUsed(std::to_string(ss->pdlu), false);
+              self->NVMeStatus::driveLifeUsed(std::to_string(ss->pdlu), true);
 
               // the percentage is allowed to exceed 100 based on the spec.
               auto percentage = (ss->pdlu > 100) ? 100 : ss->pdlu;
               self->sdbusplus::xyz::openbmc_project::Inventory::Item::server::
-                  Drive::predictedMediaLifeLeftPercent(100 - percentage, false);
+                  Drive::predictedMediaLifeLeftPercent(100 - percentage, true);
 
               self->markFunctional(ss->nss & 0x20);
 
@@ -567,21 +568,21 @@ void NVMeDevice::pollDrive()
               {
                   // the error indicator is from smart warning
                   self->NVMeStatus::backupDeviceFault(
-                      cw & (NVME_SMART_CRIT_VOLATILE_MEMORY), false);
+                      cw & (NVME_SMART_CRIT_VOLATILE_MEMORY), true);
 
                   self->NVMeStatus::capacityFault(cw & (NVME_SMART_CRIT_SPARE),
-                                                  false);
+                                                  true);
 
                   self->NVMeStatus::temperatureFault(
-                      cw & (NVME_SMART_CRIT_TEMPERATURE), false);
+                      cw & (NVME_SMART_CRIT_TEMPERATURE), true);
 
                   self->NVMeStatus::degradesFault(
-                      cw & (NVME_SMART_CRIT_DEGRADED), false);
+                      cw & (NVME_SMART_CRIT_DEGRADED), true);
 
                   self->NVMeStatus::mediaFault(cw & ((NVME_SMART_CRIT_MEDIA)),
-                                               false);
+                                               true);
 
-                  self->NVMeStatus::smartWarnings(std::to_string(cw), false);
+                  self->NVMeStatus::smartWarnings(std::to_string(cw), true);
 
                   if (cw != 0)
                   {
@@ -608,7 +609,7 @@ void NVMeDevice::updateSanitizeStatus(EraseMethod type)
     Progress::status(OperationStatus::InProgress);
     inProgress = true;
     setEraseType(type);
-    Operation::operation(OperationType::Sanitize, false);
+    Operation::operation(OperationType::Sanitize, true);
 }
 
 void NVMeDevice::erase(uint16_t overwritePasses, EraseMethod type)
