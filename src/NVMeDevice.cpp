@@ -33,13 +33,13 @@ using Json = nlohmann::json;
 NVMeDevice::NVMeDevice(boost::asio::io_service& io,
                        sdbusplus::asio::object_server& objectServer,
                        std::shared_ptr<sdbusplus::asio::connection>& conn,
-                       uint8_t eid, std::vector<uint8_t> addr,
+                       uint8_t eid, uint32_t bus, std::vector<uint8_t> addr,
                        std::string path) :
     NvmeInterfaces(static_cast<sdbusplus::bus::bus&>(*conn), path.c_str(),
                    NvmeInterfaces::action::defer_emit),
     std::enable_shared_from_this<NVMeDevice>(), conn(conn),
     objServer(objectServer), scanTimer(io), driveFunctional(false),
-    smartWarning(0xff), inProgress(false), objPath(path), eid(eid),
+    smartWarning(0xff), inProgress(false), objPath(path), eid(eid), bus(bus),
     backupDeviceErr(false), temperatureErr(false), degradesErr(false),
     mediaErr(false), capacityErr(false)
 {
@@ -132,6 +132,18 @@ std::string NVMeDevice::stripString(char *src, size_t len)
     s.assign(src, src+len);
     s.erase(s.find_last_not_of(' ') + 1);
     return s;
+}
+
+void NVMeDevice::updateLocation(std::string loc)
+{
+    Location::locationCode(loc, false);
+}
+
+void NVMeDevice::updateFormFactor(std::string form)
+{
+    size_t pos = form.find_last_of(".");
+    auto formFactor = getDriveFormFactor(form.substr(pos+1));
+    Drive::formFactor(formFactor, false);
 }
 
 std::string NVMeDevice::getManufacture(uint16_t vid)
@@ -275,30 +287,6 @@ void NVMeDevice::initialize()
             self->Port::currentSpeed(
                 getCurrLinkSpeed(port->pcie.cls, port->pcie.nlw), false);
         });
-
-    // get drive's location and form factor from Json file.
-    std::ifstream jsonFile(driveConfig);
-    auto data = Json::parse(jsonFile, nullptr, false);
-    try
-    {
-        auto drives = data["drive"];
-        for(auto &d : drives) {
-            auto driveEid = d["eid"].get<std::uint8_t>();
-            if (eid == driveEid)
-            {
-                auto loc = d["location"].get<std::string>();
-                Location::locationCode(loc, false);
-                auto formFactor = getDriveFormFactor(d["form_factor"].get<std::string>());
-                Drive::formFactor(formFactor, false);
-            }
-        }
-    }
-    catch (const std::exception& e)
-    {
-        // drive json only populate location and form factor
-        // continue with other properties if json parsing failed
-        lg2::error("failed to parse drive json file.");
-    }
 }
 
 void NVMeDevice::markStatus(std::string status)
