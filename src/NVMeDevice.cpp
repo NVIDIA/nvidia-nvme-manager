@@ -283,9 +283,9 @@ void NVMeDevice::initialize()
                 lg2::error("fail to get PCIePortInformation");
                 return;
             }
-            self->Port::maxSpeed(
+            self->PortMetrics::maxSpeed(
                 getMaxLinkSpeed(port->pcie.sls, port->pcie.mlw), true);
-            self->Port::currentSpeed(
+            self->PortInfo::currentSpeed(
                 getCurrLinkSpeed(port->pcie.cls, port->pcie.nlw), true);
         });
 }
