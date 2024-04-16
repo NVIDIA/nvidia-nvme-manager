@@ -15,7 +15,6 @@
 #include <xyz/openbmc_project/State/Decorator/OperationalStatus/server.hpp>
 #include <xyz/openbmc_project/Inventory/Item/StorageController/server.hpp>
 #include <xyz/openbmc_project/Software/Version/server.hpp>
-#include <xyz/openbmc_project/Metrics/PortMetricsOem1/server.hpp>
 #include <xyz/openbmc_project/Inventory/Decorator/PortInfo/server.hpp>
 #include <xyz/openbmc_project/Inventory/Decorator/LocationCode/server.hpp>
 #include <xyz/openbmc_project/Inventory/Item/Drive/server.hpp>
@@ -30,7 +29,6 @@ using Drive = sdbusplus::xyz::openbmc_project::Inventory::Item::server::Drive;
 using Asset =
     sdbusplus::xyz::openbmc_project::Inventory::Decorator::server::Asset;
 using PortInfo = sdbusplus::server::xyz::openbmc_project::inventory::decorator::PortInfo;
-using PortMetrics = sdbusplus::server::xyz::openbmc_project::metrics::PortMetricsOem1;
 using Version = sdbusplus::xyz::openbmc_project::Software::server::Version;
 using Health =
     sdbusplus::xyz::openbmc_project::State::Decorator::server::Health;
@@ -46,7 +44,7 @@ using SecureErase = sdbusplus::xyz::openbmc_project::Nvme::server::SecureErase;
 using Operation = sdbusplus::xyz::openbmc_project::Nvme::server::Operation;
 
 using NvmeInterfaces = sdbusplus::server::object::object<
-    Item, StorageController, PortInfo, PortMetrics, Drive, Health, OperationalStatus, Asset,
+    Item, StorageController, PortInfo, Drive, Health, OperationalStatus, Asset,
     Version, NVMeStatus, Location, Associations, Progress, SecureErase, Operation>;
 using AssociationList =
     std::vector<std::tuple<std::string, std::string, std::string>>;
