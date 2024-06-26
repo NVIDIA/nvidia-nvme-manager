@@ -78,6 +78,7 @@ class NVMeDevice :
 
     std::string stripString(char *src, size_t len);
     std::string getManufacture(uint16_t vid);
+    std::string driveAssociation;
 
     std::shared_ptr<NVMeMiIntf> getIntf()
     {
@@ -131,6 +132,7 @@ class NVMeDevice :
     void updatePercent(uint16_t endTime);
     void updateLocation(std::string loc);
     void updateFormFactor(std::string form);
+    void updateDriveAssociations();
     void erase(uint16_t overwritePasses, EraseMethod eraseType);
 
     bool backupDeviceFault(bool value)
