@@ -17,6 +17,7 @@ static void handleEmEndpoints(const ManagedObjectType& objData)
     std::string loc;
     std::string form;
     std::string parentChassis;
+    std::string driveAssoc;
     uint64_t bus = -1;
 
     for (const auto& [path, data] : objData)
@@ -58,6 +59,29 @@ static void handleEmEndpoints(const ManagedObjectType& objData)
             }
             form = std::get<std::string>(findProp->second);
         }
+        // To support a design that NVMe drives are on a backplane rather than baseboard/DC-SCM.
+        // Get the associations from Dbus object, and assign associations for NVMe drive.
+        ep = data.find("xyz.openbmc_project.Association.Definitions");
+        if ( ep != data.end())
+        {
+            const Properties& prop = ep->second;
+            auto findProp = prop.find("Associations");
+            if (findProp == prop.end())
+            {
+                continue;
+            }
+            const auto assocs = std::get<std::vector<std::tuple<
+                                std::string, std::string, std::string>>>(findProp->second);
+            for (const auto& assoc : assocs)
+            {
+                std::string assocPath = std::get<2>(assoc);
+                if (std::get<1>(assoc) != "containing")
+                {
+                    continue;
+                }
+                driveAssoc = assocPath;
+            }
+        }
 
         for (const auto& [_, context] : driveMap)
         {
@@ -68,6 +92,8 @@ static void handleEmEndpoints(const ManagedObjectType& objData)
             }
             context->updateLocation(loc);
             context->updateFormFactor(form);
+            context->driveAssociation = driveAssoc;
+            context->updateDriveAssociations();
         }
     }
 
@@ -136,6 +162,7 @@ static void handleMCTPEndpoints(
             addr = std::get<std::vector<uint8_t>>(findAddr->second);
         }
         if (!nvmeCap) {
+            lg2::info("No supported NVMe-MI message type on EID: {EID}", "EID", eid);
             continue;
         }
         uint32_t bus = -1;

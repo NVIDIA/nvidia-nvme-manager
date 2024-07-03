@@ -145,6 +145,27 @@ void NVMeDevice::updateFormFactor(std::string form)
     Drive::formFactor(formFactor, false);
 }
 
+void NVMeDevice::updateDriveAssociations()
+{
+    HealthType healthType = Health::health();
+    assocs = {};
+
+    // Read the current Health state and restore for associations
+    if(healthType == HealthType::Critical)
+    {
+        assocs.emplace_back("health", "critical", objPath.c_str());
+    }
+    else if (healthType == HealthType::Warning)
+    {
+        assocs.emplace_back("health", "warning", objPath.c_str());
+    }
+
+    // Set Drive's association
+    assocs.emplace_back("chassis", "drive", driveAssociation.c_str());
+
+    Associations::associations(assocs);
+}
+
 std::string NVMeDevice::getManufacture(uint16_t vid)
 {
 
@@ -308,7 +329,15 @@ void NVMeDevice::markStatus(std::string status)
     {
         Health::health(HealthType::OK, true);
     }
-    assocs.emplace_back("chassis", "drive", driveLocation);
+
+    if (!driveAssociation.empty())
+    {
+        assocs.emplace_back("chassis", "drive", driveAssociation.c_str());
+    }
+    else
+    {
+        assocs.emplace_back("chassis", "drive", driveLocation);
+    }
     Associations::associations(assocs);
 }
 

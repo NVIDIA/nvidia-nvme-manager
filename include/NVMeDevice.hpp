@@ -21,6 +21,7 @@
 #include <xyz/openbmc_project/Common/Progress/server.hpp>
 #include <xyz/openbmc_project/Nvme/SecureErase/server.hpp>
 #include <xyz/openbmc_project/Nvme/Operation/server.hpp>
+#include <xyz/openbmc_project/Inventory/Item/Storage/server.hpp>
 #include <xyz/openbmc_project/Common/error.hpp>
 #include <NVMeMi.hpp>
 
@@ -42,10 +43,11 @@ using StorageController = sdbusplus::xyz::openbmc_project::Inventory::Item::serv
 using Progress = sdbusplus::xyz::openbmc_project::Common::server::Progress;
 using SecureErase = sdbusplus::xyz::openbmc_project::Nvme::server::SecureErase;
 using Operation = sdbusplus::xyz::openbmc_project::Nvme::server::Operation;
+using Storage = sdbusplus::xyz::openbmc_project::Inventory::Item::server::Storage;
 
 using NvmeInterfaces = sdbusplus::server::object::object<
     Item, StorageController, PortInfo, Drive, Health, OperationalStatus, Asset,
-    Version, NVMeStatus, Location, Associations, Progress, SecureErase, Operation>;
+    Version, NVMeStatus, Location, Associations, Progress, SecureErase, Operation, Storage>;
 using AssociationList =
     std::vector<std::tuple<std::string, std::string, std::string>>;
 
@@ -76,6 +78,7 @@ class NVMeDevice :
 
     std::string stripString(char *src, size_t len);
     std::string getManufacture(uint16_t vid);
+    std::string driveAssociation;
 
     std::shared_ptr<NVMeMiIntf> getIntf()
     {
@@ -129,6 +132,7 @@ class NVMeDevice :
     void updatePercent(uint16_t endTime);
     void updateLocation(std::string loc);
     void updateFormFactor(std::string form);
+    void updateDriveAssociations();
     void erase(uint16_t overwritePasses, EraseMethod eraseType);
 
     bool backupDeviceFault(bool value)

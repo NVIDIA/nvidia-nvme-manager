@@ -168,12 +168,8 @@ struct getObjects :
                     {
                         // anything that starts with a requested configuration
                         // is good
-                        if (std::find_if(
-                                interfaces.begin(), interfaces.end(),
-                                [interface](const std::string& possible) {
-                                    return boost::starts_with(interface,
-                                                              possible);
-                                }) != interfaces.end())
+                        if (std::find(interfaces.begin(), interfaces.end(), interface) !=
+                            interfaces.end())
                         {
                             num ++;
                         }
@@ -188,12 +184,8 @@ struct getObjects :
                     // specified.
                     for (const std::string& interface : objDict.begin()->second)
                     {
-                        if (std::find_if(
-                                interfaces.begin(), interfaces.end(),
-                                [interface](const std::string& possible) {
-                                    return boost::starts_with(interface,
-                                                              possible);
-                                }) == interfaces.end())
+                        if (std::find(interfaces.begin(), interfaces.end(), interface) ==
+                            interfaces.end())
                         {
                             continue;
                         }
