@@ -66,20 +66,17 @@ static void handleEmEndpoints(const ManagedObjectType& objData)
         {
             const Properties& prop = ep->second;
             auto findProp = prop.find("Associations");
-            if (findProp == prop.end())
+            if (findProp != prop.end())
             {
-                continue;
-            }
-            const auto assocs = std::get<std::vector<std::tuple<
-                                std::string, std::string, std::string>>>(findProp->second);
-            for (const auto& assoc : assocs)
-            {
-                std::string assocPath = std::get<2>(assoc);
-                if (std::get<1>(assoc) != "containing")
+                const auto assocs = std::get<std::vector<std::tuple<
+                                    std::string, std::string, std::string>>>(findProp->second);
+                for (const auto& assoc : assocs)
                 {
-                    continue;
+                    if (std::get<1>(assoc) == "containing")
+                    {
+                        driveAssoc = std::get<2>(assoc);
+                    }
                 }
-                driveAssoc = assocPath;
             }
         }
 
@@ -92,8 +89,11 @@ static void handleEmEndpoints(const ManagedObjectType& objData)
             }
             context->updateLocation(loc);
             context->updateFormFactor(form);
-            context->driveAssociation = driveAssoc;
-            context->updateDriveAssociations();
+            if (!driveAssoc.empty())
+            {
+                context->driveAssociation = driveAssoc;
+                context->updateDriveAssociations();
+            }
         }
     }
 
