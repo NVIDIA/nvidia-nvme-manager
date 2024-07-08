@@ -47,7 +47,7 @@ using Storage = sdbusplus::xyz::openbmc_project::Inventory::Item::server::Storag
 
 using NvmeInterfaces = sdbusplus::server::object::object<
     Item, StorageController, PortInfo, Drive, Health, OperationalStatus, Asset,
-    Version, NVMeStatus, Location, Associations, Progress, SecureErase, Operation, Storage>;
+    Version, NVMeStatus, Location, Associations, Progress, SecureErase, Operation>;
 using AssociationList =
     std::vector<std::tuple<std::string, std::string, std::string>>;
 
