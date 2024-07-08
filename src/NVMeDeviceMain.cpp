@@ -181,7 +181,7 @@ static void handleMCTPEndpoints(
         {
             lg2::info("Drive is added on EID: {EID}", "EID", eid);
 
-            std::string p("/xyz/openbmc_project/inventory/drive/");
+            std::string p("/xyz/openbmc_project/inventory/item/drive/");
             p += std::to_string(eid);
             auto DrivePtr = std::make_shared<NVMeDevice>(
                 io, objectServer, dbusConnection, eid, bus, std::move(addr), p);
@@ -245,7 +245,7 @@ int main()
     boost::asio::io_service io;
     auto bus = std::make_shared<sdbusplus::asio::connection>(io);
     sdbusplus::asio::object_server objectServer(bus, true);
-    objectServer.add_manager("/xyz/openbmc_project/inventory/drive");
+    objectServer.add_manager("/xyz/openbmc_project/inventory/item/drive");
 
     std::vector<std::unique_ptr<sdbusplus::bus::match::match>> matches;
 
@@ -275,6 +275,13 @@ int main()
                 collectInventory(bus);
             });
         };
+
+    // Add interface for storage inventory
+    std::string storagePath = "/xyz/openbmc_project/inventory/item/storage/1";
+    std::unique_ptr<Storage> storageIface = std::make_unique<Storage>(
+        static_cast<sdbusplus::bus::bus&>(*bus),
+        storagePath.c_str());
+    storageIface->emit_added();
 
     auto emIfaceAddedMatch = std::make_unique<sdbusplus::bus::match::match>(
         static_cast<sdbusplus::bus::bus&>(*bus),
