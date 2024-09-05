@@ -292,8 +292,6 @@ void NVMeDevice::initialize()
               self->SecureErase::sanitizeCapability(saniCap, true);
               self->setNodmmas(id->sanicap);
             });
-            // nvme_mi_ctrl is needed inside pollDrive
-            self->pollDrive();
         });
     intf->miPCIePortInformation(
         [self{shared_from_this()}](__attribute__((unused))
@@ -302,12 +300,14 @@ void NVMeDevice::initialize()
             if (err)
             {
                 lg2::error("fail to get PCIePortInformation");
+                self->pollDrive();
                 return;
             }
             self->PortInfo::maxSpeed(
                 getMaxLinkSpeed(port->pcie.sls, port->pcie.mlw), true);
             self->PortInfo::currentSpeed(
                 getCurrLinkSpeed(port->pcie.cls, port->pcie.nlw), true);
+            self->pollDrive();
         });
 }
 
@@ -417,8 +417,13 @@ void NVMeDevice::generateRedfishEventbySmart(uint8_t sw)
     }
 }
 
-void NVMeDevice::updatePercent(uint16_t endTime)
+void NVMeDevice::updatePercent(uint32_t endTime)
 {
+    if (endTime == 0xFFFFFFFF)
+    {
+        endTime = driveSanitizeTime; 
+        lg2::info("no estimated sanitize time is reported by drive");
+    }
     auto time = getEstimateTime() + pollInterval;
     auto percent = (time * 100) / endTime;
 
@@ -455,7 +460,7 @@ void NVMeDevice::pollDrive()
         }
 
         auto miIntf = self->getIntf();
-        if (self->Operation::operation() == OperationType::Sanitize)
+        if (self->Operation::operation() == OperationType::Sanitize && self->inProgress == true)
         {
             miIntf->adminGetLogPage(
                 self->ctrl, NVME_LOG_LID_SANITIZE, 0, 0, 0,
@@ -495,7 +500,7 @@ void NVMeDevice::pollDrive()
 
                     auto type = self->getEraseType();
                     auto noDeAlloc = self->getNodmmas();
-                    uint16_t time = 0;
+                    uint32_t time = 0;
                     if (type == EraseMethod::CryptoErase)
                     {
                         if (noDeAlloc)
@@ -563,6 +568,7 @@ void NVMeDevice::pollDrive()
                   lg2::error(
                       "fail to query SMART for the nvme subsystem {ERR}:{MSG}",
                       "ERR", ec.value(), "MSG", ec.message());
+                  self->pollDrive();
                   return;
               }
 
@@ -627,8 +633,8 @@ void NVMeDevice::pollDrive()
               boost::multiprecision::uint128_t powerOnHours;
               memcpy((void*)&powerOnHours, log->power_on_hours,
                      sizeof(powerOnHours));
+              self->pollDrive();
             });
-        self->pollDrive();
     });
 }
 
