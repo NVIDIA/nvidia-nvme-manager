@@ -15,6 +15,7 @@ std::unordered_map<uint8_t, std::shared_ptr<NVMeDevice>> driveMap;
 static void handleEmEndpoints(const ManagedObjectType& objData)
 {
     std::string loc;
+    std::string locationType;
     std::string form;
     std::string parentChassis;
     std::string driveAssoc;
@@ -28,7 +29,7 @@ static void handleEmEndpoints(const ManagedObjectType& objData)
             continue;
         }
 
-        ep = data.find("xyz.openbmc_project.Inventory.Decorator.Location");
+        ep = data.find("xyz.openbmc_project.Inventory.Decorator.LocationCode");
         if ( ep != data.end())
         {
             const Properties& prop = ep->second;
@@ -38,6 +39,17 @@ static void handleEmEndpoints(const ManagedObjectType& objData)
                 continue;
             }
             loc = std::get<std::string>(findProp->second);
+        }
+        ep = data.find("xyz.openbmc_project.Inventory.Decorator.Location");
+        if ( ep != data.end())
+        {
+            const Properties& prop = ep->second;
+            auto findProp = prop.find("LocationType");
+            if (findProp == prop.end())
+            {
+                continue;
+            }
+            locationType = std::get<std::string>(findProp->second);
         }
         ep = data.find("xyz.openbmc_project.Inventory.Decorator.I2CDevice");
         if ( ep != data.end())
@@ -87,7 +99,7 @@ static void handleEmEndpoints(const ManagedObjectType& objData)
             {
                 continue;
             }
-            context->updateLocation(loc);
+            context->updateLocation(loc, locationType);
             context->updateFormFactor(form);
             if (!driveAssoc.empty())
             {

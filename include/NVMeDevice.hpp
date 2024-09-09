@@ -17,6 +17,7 @@
 #include <xyz/openbmc_project/Software/Version/server.hpp>
 #include <xyz/openbmc_project/Inventory/Decorator/PortInfo/server.hpp>
 #include <xyz/openbmc_project/Inventory/Decorator/LocationCode/server.hpp>
+#include <xyz/openbmc_project/Inventory/Decorator/Location/server.hpp>
 #include <xyz/openbmc_project/Inventory/Item/Drive/server.hpp>
 #include <xyz/openbmc_project/Common/Progress/server.hpp>
 #include <xyz/openbmc_project/Nvme/SecureErase/server.hpp>
@@ -38,7 +39,9 @@ using Associations =
 using OperationalStatus = sdbusplus::xyz::openbmc_project::State::Decorator::
     server::OperationalStatus;
 using NVMeStatus = sdbusplus::xyz::openbmc_project::Nvme::server::Status;
-using Location = sdbusplus::xyz::openbmc_project::Inventory::Decorator::server::LocationCode;
+using LocationCode = sdbusplus::xyz::openbmc_project::Inventory::Decorator::server::LocationCode;
+using Location = sdbusplus::xyz::openbmc_project::Inventory::Decorator::server::Location;
+using StorageController = sdbusplus::xyz::openbmc_project::Inventory::Item::server::StorageController;
 using StorageController = sdbusplus::xyz::openbmc_project::Inventory::Item::server::StorageController;
 using Progress = sdbusplus::xyz::openbmc_project::Common::server::Progress;
 using SecureErase = sdbusplus::xyz::openbmc_project::Nvme::server::SecureErase;
@@ -47,7 +50,7 @@ using Storage = sdbusplus::xyz::openbmc_project::Inventory::Item::server::Storag
 
 using NvmeInterfaces = sdbusplus::server::object::object<
     Item, StorageController, PortInfo, Drive, Health, OperationalStatus, Asset,
-    Version, NVMeStatus, Location, Associations, Progress, SecureErase, Operation>;
+    Version, NVMeStatus, LocationCode, Location, Associations, Progress, SecureErase, Operation>;
 using AssociationList =
     std::vector<std::tuple<std::string, std::string, std::string>>;
 
@@ -130,7 +133,7 @@ class NVMeDevice :
     }
 
     void updatePercent(uint32_t endTime);
-    void updateLocation(std::string loc);
+    void updateLocation(std::string loc, std::string locType);
     void updateFormFactor(std::string form);
     void updateDriveAssociations();
     void erase(uint16_t overwritePasses, EraseMethod eraseType);
