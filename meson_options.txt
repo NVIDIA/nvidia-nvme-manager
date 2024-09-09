@@ -1,1 +1,2 @@
 option ('platform_drive_location', type : 'string', value : '/xyz/openbmc_project/inventory/system/chassis/Baseboard_0', description : 'which board will  NVMe drives located in the system ')
+option('drive_sanitize_time', type: 'integer',value: 30, description: 'the default sanitize time 30 seconds if it is not reported by drive')

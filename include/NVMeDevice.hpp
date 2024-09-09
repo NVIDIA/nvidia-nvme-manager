@@ -115,12 +115,12 @@ class NVMeDevice :
         eraseType = type;
     }
 
-    uint16_t getEstimateTime()
+    uint32_t getEstimateTime()
     {
         return estimatedTime;
     }
 
-    void setEstimateTime(uint16_t time)
+    void setEstimateTime(uint32_t time)
     {
         estimatedTime = time;
     }
@@ -129,7 +129,7 @@ class NVMeDevice :
         return bus;
     }
 
-    void updatePercent(uint16_t endTime);
+    void updatePercent(uint32_t endTime);
     void updateLocation(std::string loc);
     void updateFormFactor(std::string form);
     void updateDriveAssociations();
@@ -183,7 +183,7 @@ class NVMeDevice :
     // flag of no-deallocate modifies meida after sanitize(NODMMAS)
     uint32_t nodmmas;
     EraseMethod eraseType;
-    uint16_t estimatedTime;
+    uint32_t estimatedTime;
 
     // triggered the smart error from Dbus.
     bool backupDeviceErr;
