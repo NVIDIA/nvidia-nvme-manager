@@ -131,6 +131,7 @@ void collectInventory(
         "xyz.openbmc_project.Inventory.Item.Drive",
         "xyz.openbmc_project.Inventory.Item.NVMe",
         "xyz.openbmc_project.Inventory.Decorator.I2CDevice",
+        "xyz.openbmc_project.Inventory.Decorator.LocationCode",
         "xyz.openbmc_project.Inventory.Decorator.Location",
         "xyz.openbmc_project.Association.Definitions",
         });
