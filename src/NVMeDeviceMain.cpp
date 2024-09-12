@@ -1,5 +1,6 @@
-#include <MCTPDiscovery.hpp>
 #include <NVMeDevice.hpp>
+#include <MCTPDiscovery.hpp>
+
 #include <boost/asio/steady_timer.hpp>
 
 #include <iostream>
