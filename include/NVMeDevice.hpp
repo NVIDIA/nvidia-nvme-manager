@@ -30,7 +30,8 @@ using Item = sdbusplus::xyz::openbmc_project::Inventory::server::Item;
 using Drive = sdbusplus::xyz::openbmc_project::Inventory::Item::server::Drive;
 using Asset =
     sdbusplus::xyz::openbmc_project::Inventory::Decorator::server::Asset;
-using PortInfo = sdbusplus::server::xyz::openbmc_project::inventory::decorator::PortInfo;
+using PortInfo =
+    sdbusplus::server::xyz::openbmc_project::inventory::decorator::PortInfo;
 using Version = sdbusplus::xyz::openbmc_project::Software::server::Version;
 using Health =
     sdbusplus::xyz::openbmc_project::State::Decorator::server::Health;
@@ -39,18 +40,24 @@ using Associations =
 using OperationalStatus = sdbusplus::xyz::openbmc_project::State::Decorator::
     server::OperationalStatus;
 using NVMeStatus = sdbusplus::xyz::openbmc_project::Nvme::server::Status;
-using LocationCode = sdbusplus::xyz::openbmc_project::Inventory::Decorator::server::LocationCode;
-using Location = sdbusplus::xyz::openbmc_project::Inventory::Decorator::server::Location;
-using StorageController = sdbusplus::xyz::openbmc_project::Inventory::Item::server::StorageController;
-using StorageController = sdbusplus::xyz::openbmc_project::Inventory::Item::server::StorageController;
+using LocationCode =
+    sdbusplus::xyz::openbmc_project::Inventory::Decorator::server::LocationCode;
+using Location =
+    sdbusplus::xyz::openbmc_project::Inventory::Decorator::server::Location;
+using StorageController =
+    sdbusplus::xyz::openbmc_project::Inventory::Item::server::StorageController;
+using StorageController =
+    sdbusplus::xyz::openbmc_project::Inventory::Item::server::StorageController;
 using Progress = sdbusplus::xyz::openbmc_project::Common::server::Progress;
 using SecureErase = sdbusplus::xyz::openbmc_project::Nvme::server::SecureErase;
 using Operation = sdbusplus::xyz::openbmc_project::Nvme::server::Operation;
-using Storage = sdbusplus::xyz::openbmc_project::Inventory::Item::server::Storage;
+using Storage =
+    sdbusplus::xyz::openbmc_project::Inventory::Item::server::Storage;
 
 using NvmeInterfaces = sdbusplus::server::object::object<
     Item, StorageController, PortInfo, Drive, Health, OperationalStatus, Asset,
-    Version, NVMeStatus, LocationCode, Location, Associations, Progress, SecureErase, Operation>;
+    Version, NVMeStatus, LocationCode, Location, Associations, Progress,
+    SecureErase, Operation>;
 using AssociationList =
     std::vector<std::tuple<std::string, std::string, std::string>>;
 
@@ -79,7 +86,7 @@ class NVMeDevice :
     void generateRedfishEventbySmart(uint8_t sw);
     void updateSanitizeStatus(EraseMethod type);
 
-    std::string stripString(char *src, size_t len);
+    std::string stripString(char* src, size_t len);
     std::string getManufacture(uint16_t vid);
     std::string driveAssociation;
 
@@ -106,7 +113,6 @@ class NVMeDevice :
         // after sanitize operation completes successfully.
         nodmmas = value & (0x80000000);
     }
-
 
     EraseMethod getEraseType()
     {
@@ -194,5 +200,4 @@ class NVMeDevice :
     bool degradesErr;
     bool mediaErr;
     bool capacityErr;
-
 };

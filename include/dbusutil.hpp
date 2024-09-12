@@ -7,8 +7,7 @@
 const std::string resourceErrorDetected{
     "ResourceEvent.1.0.ResourceErrorsDetected"};
 
-using Level =
-        sdbusplus::xyz::openbmc_project::Logging::server::Entry::Level;
+using Level = sdbusplus::xyz::openbmc_project::Logging::server::Entry::Level;
 /** @brief Create the D-Bus log entry for message registry
  *
  *  @param[in] messageID - Message ID
@@ -18,8 +17,7 @@ using Level =
  *  @param[in] logNamespace - Logging namespace, default is FWUpdate
  */
 inline void createLogEntry(std::shared_ptr<sdbusplus::asio::connection>& conn,
-                           const std::string& messageID,
-                           const Level &level,
+                           const std::string& messageID, const Level& level,
                            const std::string& arg0, const std::string& arg1,
                            const std::string& resolution,
                            const std::string& ooc,
@@ -57,14 +55,13 @@ inline void createLogEntry(std::shared_ptr<sdbusplus::asio::connection>& conn,
             level);
     conn->async_method_call(
         [](boost::system::error_code ec) {
-            if (ec)
-            {
-                lg2::error(
-                    "error while logging message registry: {ERROR_MESSAGE}",
-                    "ERROR_MESSAGE", ec.message());
-                return;
-            }
-        },
+        if (ec)
+        {
+            lg2::error("error while logging message registry: {ERROR_MESSAGE}",
+                       "ERROR_MESSAGE", ec.message());
+            return;
+        }
+    },
         "xyz.openbmc_project.Logging", "/xyz/openbmc_project/logging",
         "xyz.openbmc_project.Logging.Create", "Create", messageID, severity,
         addData);

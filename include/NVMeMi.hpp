@@ -8,12 +8,14 @@
 class NVMeMi : public NVMeMiIntf, public std::enable_shared_from_this<NVMeMi>
 {
   public:
-    NVMeMi(boost::asio::io_context& io, std::shared_ptr<sdbusplus::asio::connection> conn, std::vector<uint8_t> addr, uint8_t eid);
+    NVMeMi(boost::asio::io_context& io,
+           std::shared_ptr<sdbusplus::asio::connection> conn,
+           std::vector<uint8_t> addr, uint8_t eid);
     ~NVMeMi() override;
 
     void miPCIePortInformation(
-        std::function<void(const std::error_code&,
-                          nvme_mi_read_port_info*)>&& cb) override;
+        std::function<void(const std::error_code&, nvme_mi_read_port_info*)>&&
+            cb) override;
     void miSubsystemHealthStatusPoll(
         std::function<void(const std::error_code&,
                            nvme_mi_nvm_ss_health_status*)>&& cb) override;

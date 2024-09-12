@@ -20,7 +20,8 @@ nvme_root_t NVMeMi::nvmeRoot = nvme_mi_create_root(stderr, DEFAULT_LOGLEVEL);
 constexpr size_t maxNVMeMILength = 4096;
 
 NVMeMi::NVMeMi(boost::asio::io_context& io,
-               std::shared_ptr<sdbusplus::asio::connection> conn, std::vector<uint8_t> sockName, uint8_t eid) :
+               std::shared_ptr<sdbusplus::asio::connection> conn,
+               std::vector<uint8_t> sockName, uint8_t eid) :
     io(io),
     conn(conn), dbus(*conn.get()), eid(eid)
 {
@@ -49,7 +50,7 @@ NVMeMi::NVMeMi(boost::asio::io_context& io,
         worker = res->second.lock();
     }
 
-    nvmeEP = nvme_mi_open_libmctp(nvmeRoot, 0, (char *) sockName.data(), eid);
+    nvmeEP = nvme_mi_open_libmctp(nvmeRoot, 0, (char*)sockName.data(), eid);
     if (nvmeEP == nullptr)
     {
         nid = -1;
@@ -101,7 +102,7 @@ NVMeMi::Worker::~Worker()
 }
 NVMeMi::~NVMeMi()
 {
-    //closeMCTP();
+    // closeMCTP();
 }
 
 void NVMeMi::Worker::post(std::function<void(void)>&& func)
@@ -145,8 +146,7 @@ std::error_code NVMeMi::try_post(std::function<void(void)>&& func)
 }
 
 void NVMeMi::miPCIePortInformation(
-    std::function<void(const std::error_code&, nvme_mi_read_port_info*)>&&
-        cb)
+    std::function<void(const std::error_code&, nvme_mi_read_port_info*)>&& cb)
 {
     if (!nvmeEP)
     {
@@ -217,8 +217,7 @@ void NVMeMi::miPCIePortInformation(
                 }
             }
 
-            self->io.post(
-                [cb{std::move(cb)}, port{std::move(port)}]() mutable {
+            self->io.post([cb{std::move(cb)}, port{std::move(port)}]() mutable {
                 cb({}, &port);
             });
         });
@@ -324,7 +323,8 @@ void NVMeMi::miScanCtrl(std::function<void(const std::error_code&,
                     "ADDR", self->addr, "EID", static_cast<int>(self->eid),
                     "ERR", std::strerror(errno));
                 self->io.post([cb{std::move(cb)}, last_errno{errno}]() {
-                    cb(std::make_error_code(static_cast<std::errc>(last_errno)), {});
+                    cb(std::make_error_code(static_cast<std::errc>(last_errno)),
+                       {});
                 });
                 return;
             }
@@ -429,7 +429,8 @@ void NVMeMi::adminIdentify(
                     "ADDR", self->addr, "EID", static_cast<int>(self->eid),
                     "ERR", std::strerror(errno));
                 self->io.post([cb{std::move(cb)}, last_errno{errno}]() {
-                    cb(std::make_error_code(static_cast<std::errc>(last_errno)), {});
+                    cb(std::make_error_code(static_cast<std::errc>(last_errno)),
+                       {});
                 });
                 return;
             }
@@ -524,7 +525,7 @@ void NVMeMi::adminSanitize(
     uint32_t owpattern,
     std::function<void(const std::error_code&, std::span<uint8_t>)>&& cb)
 {
-     if (!nvmeEP)
+    if (!nvmeEP)
     {
         lg2::error("nvme endpoint is invalid");
         io.post([cb{std::move(cb)}]() {
@@ -539,14 +540,14 @@ void NVMeMi::adminSanitize(
             int rc = 0;
             std::vector<uint8_t> data(8);
             struct nvme_sanitize_nvm_args args;
-            memset (&args, 0, sizeof(args));
+            memset(&args, 0, sizeof(args));
 
             args.args_size = sizeof(args);
             args.sanact = sanact;
             args.owpass = owpass;
             args.nodas = 0x1;
             args.ovrpat = owpattern;
-            args.result = (uint32_t *) data.data();
+            args.result = (uint32_t*)data.data();
 
             rc = nvme_mi_admin_sanitize_nvm(ctrl, &args);
             if (rc < 0)
@@ -556,7 +557,8 @@ void NVMeMi::adminSanitize(
                     "ADDR", self->addr, "EID", static_cast<int>(self->eid),
                     "ERR", std::strerror(errno));
                 self->io.post([cb{std::move(cb)}, last_errno{errno}]() {
-                    cb(std::make_error_code(static_cast<std::errc>(last_errno)), {});
+                    cb(std::make_error_code(static_cast<std::errc>(last_errno)),
+                       {});
                 });
                 return;
             }
@@ -622,8 +624,8 @@ void NVMeMi::adminGetLogPage(
                     // The number of entries for most recent error logs.
                     // Currently we only do one nvme mi transfer for the
                     // error log to avoid blocking other tasks
-                    static constexpr int num =
-                        nvme_mi_xfer_size / sizeof(nvme_error_log_page);
+                    static constexpr int num = nvme_mi_xfer_size /
+                                               sizeof(nvme_error_log_page);
                     nvme_error_log_page* log =
                         reinterpret_cast<nvme_error_log_page*>(data.data());
 
@@ -711,11 +713,10 @@ void NVMeMi::adminGetLogPage(
                     data.resize(sizeof(nvme_ns_list));
                     nvme_ns_list* log =
                         reinterpret_cast<nvme_ns_list*>(data.data());
-                    rc =
-                        nvme_mi_admin_get_log_changed_ns_list(ctrl, false, log);
+                    rc = nvme_mi_admin_get_log_changed_ns_list(ctrl, false,
+                                                               log);
                     if (rc)
                     {
-
                         lg2::error(
                             "[addr:{ADDR}, eid:{EID}] fail to get changed namespace list",
                             "ADDR", self->addr, "EID",
@@ -767,8 +768,8 @@ void NVMeMi::adminGetLogPage(
                         reinterpret_cast<nvme_resv_notification_log*>(
                             data.data());
 
-                    int rc =
-                        nvme_mi_admin_get_log_reservation(ctrl, false, log);
+                    int rc = nvme_mi_admin_get_log_reservation(ctrl, false,
+                                                               log);
                     if (rc)
                     {
                         lg2::error(
@@ -813,7 +814,8 @@ void NVMeMi::adminGetLogPage(
                     "ADDR", self->addr, "EID", static_cast<int>(self->eid),
                     "ERR", std::strerror(errno));
                 self->io.post([cb{std::move(cb)}, last_errno{errno}]() {
-                    cb(std::make_error_code(static_cast<std::errc>(last_errno)), {});
+                    cb(std::make_error_code(static_cast<std::errc>(last_errno)),
+                       {});
                 });
                 return;
             }
@@ -903,8 +905,8 @@ void NVMeMi::adminXfer(
                     "[addr:{ADDR}, eid:{EID}] failed to nvme_mi_admin_xfer",
                     "ADDR", self->addr, "EID", static_cast<int>(self->eid));
                 self->io.post([cb{std::move(cb)}, last_errno{errno}]() {
-                    cb(std::make_error_code(static_cast<std::errc>(last_errno)), {},
-                       {});
+                    cb(std::make_error_code(static_cast<std::errc>(last_errno)),
+                       {}, {});
                 });
                 return;
             }
@@ -925,7 +927,7 @@ void NVMeMi::adminXfer(
     catch (const std::runtime_error& e)
     {
         lg2::error("[addr:{ADDR}, eid:{EID}] {MSG}", "ADDR", addr, "EID",
-                   static_cast<int>(eid),"MSG", e.what());
+                   static_cast<int>(eid), "MSG", e.what());
         io.post([cb{std::move(cb)}]() {
             cb(std::make_error_code(std::errc::no_such_device), {}, {});
         });
@@ -986,7 +988,7 @@ void NVMeMi::adminFwCommit(
                         std::string_view errMsg = statusToString(
                             static_cast<nvme_mi_resp_status>(rc));
                         lg2::error("fail to nvme_mi_admin_fw_commit: {MSG} ",
-                                    "MSG", errMsg);
+                                   "MSG", errMsg);
                         self->io.post([rc, cb{std::move(cb)}]() {
                             cb(std::make_error_code(std::errc::bad_message),
                                static_cast<nvme_status_field>(rc));
@@ -1013,9 +1015,9 @@ void NVMeMi::adminSecuritySend(
     std::span<uint8_t> data,
     std::function<void(const std::error_code&, int nvme_status)>&& cb)
 {
-    std::error_code post_err = try_post(
-        [self{shared_from_this()}, ctrl, proto, proto_specific, data,
-         cb{std::move(cb)}]() {
+    std::error_code post_err =
+        try_post([self{shared_from_this()}, ctrl, proto, proto_specific, data,
+                  cb{std::move(cb)}]() {
         struct nvme_security_send_args args;
         memset(&args, 0x0, sizeof(args));
         args.secp = proto;
@@ -1036,7 +1038,8 @@ void NVMeMi::adminSecuritySend(
     {
         lg2::error(
             "[addr:{ADDR}, eid:{EID}] adminSecuritySend post failed: {MSG}",
-            "ADDR", addr, "EID", static_cast<int>(eid), "MSG", post_err.message());
+            "ADDR", addr, "EID", static_cast<int>(eid), "MSG",
+            post_err.message());
         io.post([cb{std::move(cb)}, post_err]() { cb(post_err, -1); });
     }
 }
@@ -1053,9 +1056,9 @@ void NVMeMi::adminSecurityReceive(
         return;
     }
 
-    std::error_code post_err = try_post(
-        [self{shared_from_this()}, ctrl, proto, proto_specific, transfer_length,
-         cb{std::move(cb)}]() {
+    std::error_code post_err =
+        try_post([self{shared_from_this()}, ctrl, proto, proto_specific,
+                  transfer_length, cb{std::move(cb)}]() {
         std::vector<uint8_t> data(transfer_length);
 
         struct nvme_security_receive_args args;
@@ -1093,7 +1096,8 @@ void NVMeMi::adminSecurityReceive(
     {
         lg2::error(
             "[addr:{ADDR}, eid:{EID}] adminSecuritySend post failed: {MSG}",
-            "ADDR", addr, "EID", static_cast<int>(eid), "MSG", post_err.message());
+            "ADDR", addr, "EID", static_cast<int>(eid), "MSG",
+            post_err.message());
         io.post([cb{std::move(cb)}, post_err]() { cb(post_err, -1, {}); });
     }
 }
