@@ -1,13 +1,13 @@
-#include <NVMeDevice.hpp>
 #include <nvme-mi_config.h>
-#include <dbusutil.hpp>
 
-#include <nlohmann/json.hpp>
+#include <NVMeDevice.hpp>
 #include <boost/multiprecision/cpp_int.hpp>
+#include <dbusutil.hpp>
+#include <nlohmann/json.hpp>
 
-#include <iostream>
-#include <fstream>
 #include <filesystem>
+#include <fstream>
+#include <iostream>
 
 const std::string driveFailureResolution{
     "Ensure all cables are properly and securely connected. Ensure all drives "
@@ -25,8 +25,7 @@ const std::string redfishDriveName{"NVMe Drive"};
 const std::string driveConfig{"/usr/share/nvidia-nvme-manager/drive.json"};
 
 const std::uint8_t pollInterval = 5;
-using Level =
-        sdbusplus::xyz::openbmc_project::Logging::server::Entry::Level;
+using Level = sdbusplus::xyz::openbmc_project::Logging::server::Entry::Level;
 
 using Json = nlohmann::json;
 
@@ -47,12 +46,11 @@ NVMeDevice::NVMeDevice(boost::asio::io_service& io,
 
     driveIndex = p.filename();
 
-    //assume the drive is good and update Dbus properties at the first place.
+    // assume the drive is good and update Dbus properties at the first place.
     markFunctional(true);
 
     nvmeIntf = NVMeIntf::create<NVMeMi>(io, conn, addr, eid);
     intf = std::get<std::shared_ptr<NVMeMiIntf>>(nvmeIntf.getInferface());
-
 }
 
 inline Drive::DriveFormFactor getDriveFormFactor(std::string form)
@@ -124,11 +122,11 @@ inline Drive::DriveFormFactor getDriveFormFactor(std::string form)
     return Drive::DriveFormFactor::U2;
 }
 
-std::string NVMeDevice::stripString(char *src, size_t len)
+std::string NVMeDevice::stripString(char* src, size_t len)
 {
     std::string s;
 
-    s.assign(src, src+len);
+    s.assign(src, src + len);
     s.erase(s.find_last_not_of(' ') + 1);
     return s;
 }
@@ -136,7 +134,8 @@ std::string NVMeDevice::stripString(char *src, size_t len)
 void NVMeDevice::updateLocation(std::string location, std::string locationType)
 {
     LocationCode::locationCode(location, false);
-    if (locationType == "xyz.openbmc_project.Inventory.Decorator.Location.LocationTypes.Slot")
+    if (locationType ==
+        "xyz.openbmc_project.Inventory.Decorator.Location.LocationTypes.Slot")
     {
         Location::locationType(Location::LocationTypes::Slot, false);
     }
@@ -149,7 +148,7 @@ void NVMeDevice::updateLocation(std::string location, std::string locationType)
 void NVMeDevice::updateFormFactor(std::string form)
 {
     size_t pos = form.find_last_of(".");
-    auto formFactor = getDriveFormFactor(form.substr(pos+1));
+    auto formFactor = getDriveFormFactor(form.substr(pos + 1));
     Drive::formFactor(formFactor, false);
 }
 
@@ -159,7 +158,7 @@ void NVMeDevice::updateDriveAssociations()
     assocs = {};
 
     // Read the current Health state and restore for associations
-    if(healthType == HealthType::Critical)
+    if (healthType == HealthType::Critical)
     {
         assocs.emplace_back("health", "critical", objPath.c_str());
     }
@@ -176,7 +175,6 @@ void NVMeDevice::updateDriveAssociations()
 
 std::string NVMeDevice::getManufacture(uint16_t vid)
 {
-
     if (vid == 0x144d)
     {
         return std::string("Samsung");
@@ -198,9 +196,9 @@ inline uint32_t getMaxLinkSpeed(uint8_t speed_vec, uint8_t lanes)
     // starting from 32 Gbs
     int base = 32;
 
-    for (auto i = 4 ; i >= 0; i--)
+    for (auto i = 4; i >= 0; i--)
     {
-        if (speed_vec & ( 1 << i))
+        if (speed_vec & (1 << i))
         {
             break;
         }
@@ -219,7 +217,7 @@ inline uint32_t getCurrLinkSpeed(uint8_t speed, uint8_t lanes)
         return 0;
     }
 
-    for (auto i = 4 ; i >= 0; i--)
+    for (auto i = 4; i >= 0; i--)
     {
         if ((speed - 1) == i)
         {
@@ -244,7 +242,9 @@ void NVMeDevice::initialize()
                          const std::vector<nvme_mi_ctrl_t>& ctrlList) mutable {
         if (ec || ctrlList.size() == 0)
         {
-            lg2::error("fail to scan controllers for the nvme subsystem {ERR}: {MSG}", "ERR", ec.value(), "MSG", ec.message());
+            lg2::error(
+                "fail to scan controllers for the nvme subsystem {ERR}: {MSG}",
+                "ERR", ec.value(), "MSG", ec.message());
             self->presence = false;
             self->Item::present(false, true);
             return;
@@ -256,67 +256,67 @@ void NVMeDevice::initialize()
         self->getIntf()->adminIdentify(
             self->ctrl, nvme_identify_cns::NVME_IDENTIFY_CNS_CTRL,
             NVME_NSID_NONE, 0,
-            [self{self->shared_from_this()}](const std::error_code &ec,
+            [self{self->shared_from_this()}](const std::error_code& ec,
                                              std::span<uint8_t> data) {
-              if (ec) {
+            if (ec)
+            {
                 lg2::error("fail to do Identify command");
                 return;
-              }
+            }
 
-              struct nvme_id_ctrl* id = (struct nvme_id_ctrl*)data.data();
+            struct nvme_id_ctrl* id = (struct nvme_id_ctrl*)data.data();
 
-              self->Asset::manufacturer(self->getManufacture(id->vid), true);
-              self->Asset::serialNumber(
-                  self->stripString(id->sn, sizeof(id->sn)), true);
-              self->Asset::model(self->stripString(id->mn, sizeof(id->mn)),
-                                 true);
+            self->Asset::manufacturer(self->getManufacture(id->vid), true);
+            self->Asset::serialNumber(self->stripString(id->sn, sizeof(id->sn)),
+                                      true);
+            self->Asset::model(self->stripString(id->mn, sizeof(id->mn)), true);
 
-              std::string fr;
-              fr.assign(id->fr, id->fr + 8);
-              self->Version::version(fr, true);
+            std::string fr;
+            fr.assign(id->fr, id->fr + 8);
+            self->Version::version(fr, true);
 
-              uint64_t drive_capacity[2];
-              memcpy(&drive_capacity, id->tnvmcap, 16);
+            uint64_t drive_capacity[2];
+            memcpy(&drive_capacity, id->tnvmcap, 16);
 
-              /* 8 bytes presenting the drive capacity is enough to support all
-               * drives outside market.
-               */
-              self->Drive::capacity(drive_capacity[0], true);
+            /* 8 bytes presenting the drive capacity is enough to support all
+             * drives outside market.
+             */
+            self->Drive::capacity(drive_capacity[0], true);
 
-              // check the drive sanitize capability
-              std::vector<EraseMethod> saniCap;
-              if (id->sanicap & (NVME_CTRL_SANICAP_OWS))
-              {
-                  saniCap.push_back(EraseMethod::Overwrite);
-              }
-              if (id->sanicap & (NVME_CTRL_SANICAP_BES))
-              {
-                  saniCap.push_back(EraseMethod::BlockErase);
-              }
-              if (id->sanicap & (NVME_CTRL_SANICAP_CES))
-              {
-                  saniCap.push_back(EraseMethod::CryptoErase);
-              }
-              self->SecureErase::sanitizeCapability(saniCap, true);
-              self->setNodmmas(id->sanicap);
-            });
+            // check the drive sanitize capability
+            std::vector<EraseMethod> saniCap;
+            if (id->sanicap & (NVME_CTRL_SANICAP_OWS))
+            {
+                saniCap.push_back(EraseMethod::Overwrite);
+            }
+            if (id->sanicap & (NVME_CTRL_SANICAP_BES))
+            {
+                saniCap.push_back(EraseMethod::BlockErase);
+            }
+            if (id->sanicap & (NVME_CTRL_SANICAP_CES))
+            {
+                saniCap.push_back(EraseMethod::CryptoErase);
+            }
+            self->SecureErase::sanitizeCapability(saniCap, true);
+            self->setNodmmas(id->sanicap);
         });
+    });
     intf->miPCIePortInformation(
         [self{shared_from_this()}](__attribute__((unused))
                                    const std::error_code& err,
                                    nvme_mi_read_port_info* port) {
-            if (err)
-            {
-                lg2::error("fail to get PCIePortInformation");
-                self->pollDrive();
-                return;
-            }
-            self->PortInfo::maxSpeed(
-                getMaxLinkSpeed(port->pcie.sls, port->pcie.mlw), true);
-            self->PortInfo::currentSpeed(
-                getCurrLinkSpeed(port->pcie.cls, port->pcie.nlw), true);
+        if (err)
+        {
+            lg2::error("fail to get PCIePortInformation");
             self->pollDrive();
-        });
+            return;
+        }
+        self->PortInfo::maxSpeed(
+            getMaxLinkSpeed(port->pcie.sls, port->pcie.mlw), true);
+        self->PortInfo::currentSpeed(
+            getCurrLinkSpeed(port->pcie.cls, port->pcie.nlw), true);
+        self->pollDrive();
+    });
 }
 
 void NVMeDevice::markStatus(std::string status)
@@ -429,7 +429,7 @@ void NVMeDevice::updatePercent(uint32_t endTime)
 {
     if (endTime == 0xFFFFFFFF)
     {
-        endTime = driveSanitizeTime; 
+        endTime = driveSanitizeTime;
         lg2::info("no estimated sanitize time is reported by drive");
     }
     auto time = getEstimateTime() + pollInterval;
@@ -450,8 +450,8 @@ void NVMeDevice::updatePercent(uint32_t endTime)
 void NVMeDevice::pollDrive()
 {
     scanTimer.expires_from_now(std::chrono::seconds(pollInterval));
-    scanTimer.async_wait([self{shared_from_this()}](
-                             const boost::system::error_code errorCode) {
+    scanTimer.async_wait(
+        [self{shared_from_this()}](const boost::system::error_code errorCode) {
         if (errorCode == boost::asio::error::operation_aborted)
         {
             return; // we're being canceled
@@ -462,187 +462,190 @@ void NVMeDevice::pollDrive()
             return;
         }
         // try to re-initialize the drive
-        if (self->presence == false) {
+        if (self->presence == false)
+        {
             self->initialize();
             return;
         }
 
         auto miIntf = self->getIntf();
-        if (self->Operation::operation() == OperationType::Sanitize && self->inProgress == true)
+        if (self->Operation::operation() == OperationType::Sanitize &&
+            self->inProgress == true)
         {
             miIntf->adminGetLogPage(
                 self->ctrl, NVME_LOG_LID_SANITIZE, 0, 0, 0,
                 [self](const std::error_code& ec, std::span<uint8_t> status) {
-                    if (ec)
-                    {
-                        lg2::error(
-                            "fail to query satinize status for the nvme subsystem {ERR}:{MSG}",
-                            "ERR", ec.value(), "MSG", ec.message());
-                        return;
-                    }
+                if (ec)
+                {
+                    lg2::error(
+                        "fail to query satinize status for the nvme subsystem {ERR}:{MSG}",
+                        "ERR", ec.value(), "MSG", ec.message());
+                    return;
+                }
 
-                    struct nvme_sanitize_log_page* log =
-                        (struct nvme_sanitize_log_page*)status.data();
+                struct nvme_sanitize_log_page* log =
+                    (struct nvme_sanitize_log_page*)status.data();
 
-                    uint8_t res = log->sstat & NVME_SANITIZE_SSTAT_STATUS_MASK;
-                    if (res == NVME_SANITIZE_SSTAT_STATUS_COMPLETE_SUCCESS ||
-                        res == NVME_SANITIZE_SSTAT_STATUS_ND_COMPLETE_SUCCESS)
-                    {
-                        self->Progress::status(OperationStatus::Completed);
-                        self->Progress::progress(100);
-                        self->inProgress = false;
-                    }
-                    else if (res == NVME_SANITIZE_SSTAT_STATUS_COMPLETED_FAILED)
-                    {
-                        self->Progress::status(OperationStatus::Failed);
-                        self->Progress::progress(0);
-                        self->inProgress = false;
-                    }
-                    if (res != NVME_SANITIZE_SSTAT_STATUS_IN_PROGESS)
-                    {
-                        // sanitize is done no matter that the result it success
-                        // or fail
-                        self->pollDrive();
-                        return;
-                    }
+                uint8_t res = log->sstat & NVME_SANITIZE_SSTAT_STATUS_MASK;
+                if (res == NVME_SANITIZE_SSTAT_STATUS_COMPLETE_SUCCESS ||
+                    res == NVME_SANITIZE_SSTAT_STATUS_ND_COMPLETE_SUCCESS)
+                {
+                    self->Progress::status(OperationStatus::Completed);
+                    self->Progress::progress(100);
+                    self->inProgress = false;
+                }
+                else if (res == NVME_SANITIZE_SSTAT_STATUS_COMPLETED_FAILED)
+                {
+                    self->Progress::status(OperationStatus::Failed);
+                    self->Progress::progress(0);
+                    self->inProgress = false;
+                }
+                if (res != NVME_SANITIZE_SSTAT_STATUS_IN_PROGESS)
+                {
+                    // sanitize is done no matter that the result it success
+                    // or fail
+                    self->pollDrive();
+                    return;
+                }
 
-                    auto type = self->getEraseType();
-                    auto noDeAlloc = self->getNodmmas();
-                    uint32_t time = 0;
-                    if (type == EraseMethod::CryptoErase)
+                auto type = self->getEraseType();
+                auto noDeAlloc = self->getNodmmas();
+                uint32_t time = 0;
+                if (type == EraseMethod::CryptoErase)
+                {
+                    if (noDeAlloc)
                     {
-                        if (noDeAlloc)
-                        {
-                            time = log->etcend;
-                        }
-                        else
-                        {
-                            time = log->etce;
-                        }
+                        time = log->etcend;
                     }
-                    else if (type == EraseMethod::BlockErase)
+                    else
                     {
-                        if (noDeAlloc)
-                        {
-                            time = log->etbend;
-                        }
-                        else
-                        {
-                            time = log->etbe;
-                        }
+                        time = log->etce;
                     }
-                    else if (type == EraseMethod::Overwrite)
+                }
+                else if (type == EraseMethod::BlockErase)
+                {
+                    if (noDeAlloc)
                     {
-                        if (noDeAlloc)
-                        {
-                            time = log->etond;
-                        }
-                        else
-                        {
-                            time = log->eto;
-                        }
+                        time = log->etbend;
                     }
-                    self->updatePercent(time);
-                });
+                    else
+                    {
+                        time = log->etbe;
+                    }
+                }
+                else if (type == EraseMethod::Overwrite)
+                {
+                    if (noDeAlloc)
+                    {
+                        time = log->etond;
+                    }
+                    else
+                    {
+                        time = log->eto;
+                    }
+                }
+                self->updatePercent(time);
+            });
             // not do health polling during the sanitize process.
             self->pollDrive();
             return;
         }
 
         miIntf->miSubsystemHealthStatusPoll(
-            [self](__attribute__((unused)) const std::error_code &err,
-                   nvme_mi_nvm_ss_health_status *ss) {
-              if (err) {
+            [self](__attribute__((unused)) const std::error_code& err,
+                   nvme_mi_nvm_ss_health_status* ss) {
+            if (err)
+            {
                 lg2::error("fail to query SubSystemHealthPoll for the nvme "
                            "subsystem {ERR}:{MSG}",
                            "ERR", err.value(), "MSG", err.message());
                 return;
-              }
-              self->NVMeStatus::driveLifeUsed(std::to_string(ss->pdlu), true);
+            }
+            self->NVMeStatus::driveLifeUsed(std::to_string(ss->pdlu), true);
 
-              // the percentage is allowed to exceed 100 based on the spec.
-              auto percentage = (ss->pdlu > 100) ? 100 : ss->pdlu;
-              self->sdbusplus::xyz::openbmc_project::Inventory::Item::server::
-                  Drive::predictedMediaLifeLeftPercent(100 - percentage, true);
+            // the percentage is allowed to exceed 100 based on the spec.
+            auto percentage = (ss->pdlu > 100) ? 100 : ss->pdlu;
+            self->sdbusplus::xyz::openbmc_project::Inventory::Item::server::
+                Drive::predictedMediaLifeLeftPercent(100 - percentage, true);
 
-              self->markFunctional(ss->nss & 0x20);
-
-            });
+            self->markFunctional(ss->nss & 0x20);
+        });
 
         miIntf->adminGetLogPage(
             self->ctrl, NVME_LOG_LID_SMART, 0xFFFFFFFF, 0, 0,
-            [self](const std::error_code &ec, std::span<uint8_t> smart) {
-              if (ec) {
-                  lg2::error(
-                      "fail to query SMART for the nvme subsystem {ERR}:{MSG}",
-                      "ERR", ec.value(), "MSG", ec.message());
-                  self->pollDrive();
-                  return;
-              }
+            [self](const std::error_code& ec, std::span<uint8_t> smart) {
+            if (ec)
+            {
+                lg2::error(
+                    "fail to query SMART for the nvme subsystem {ERR}:{MSG}",
+                    "ERR", ec.value(), "MSG", ec.message());
+                self->pollDrive();
+                return;
+            }
 
-              struct nvme_smart_log *log;
-              log = (struct nvme_smart_log *) smart.data();
+            struct nvme_smart_log* log;
+            log = (struct nvme_smart_log*)smart.data();
 
-              auto cw = log->critical_warning;
+            auto cw = log->critical_warning;
 
-              // overwrite the warning triggered from Dbus
-              if (self->backupDeviceErr)
-              {
-                  cw |= (NVME_SMART_CRIT_VOLATILE_MEMORY);
-              }
-              if (self->capacityErr)
-              {
-                  cw |= (NVME_SMART_CRIT_SPARE);
-              }
-              if (self->temperatureErr)
-              {
-                  cw |= (NVME_SMART_CRIT_TEMPERATURE);
-              }
-              if (self->degradesErr)
-              {
-                  cw |= (NVME_SMART_CRIT_DEGRADED);
-              }
-              if (self->mediaErr)
-              {
-                  cw |= (NVME_SMART_CRIT_MEDIA);
-              }
+            // overwrite the warning triggered from Dbus
+            if (self->backupDeviceErr)
+            {
+                cw |= (NVME_SMART_CRIT_VOLATILE_MEMORY);
+            }
+            if (self->capacityErr)
+            {
+                cw |= (NVME_SMART_CRIT_SPARE);
+            }
+            if (self->temperatureErr)
+            {
+                cw |= (NVME_SMART_CRIT_TEMPERATURE);
+            }
+            if (self->degradesErr)
+            {
+                cw |= (NVME_SMART_CRIT_DEGRADED);
+            }
+            if (self->mediaErr)
+            {
+                cw |= (NVME_SMART_CRIT_MEDIA);
+            }
 
-              if (cw != self->smartWarning)
-              {
-                  // the error indicator is from smart warning
-                  self->NVMeStatus::backupDeviceFault(
-                      cw & (NVME_SMART_CRIT_VOLATILE_MEMORY), true);
+            if (cw != self->smartWarning)
+            {
+                // the error indicator is from smart warning
+                self->NVMeStatus::backupDeviceFault(
+                    cw & (NVME_SMART_CRIT_VOLATILE_MEMORY), true);
 
-                  self->NVMeStatus::capacityFault(cw & (NVME_SMART_CRIT_SPARE),
-                                                  true);
+                self->NVMeStatus::capacityFault(cw & (NVME_SMART_CRIT_SPARE),
+                                                true);
 
-                  self->NVMeStatus::temperatureFault(
-                      cw & (NVME_SMART_CRIT_TEMPERATURE), true);
+                self->NVMeStatus::temperatureFault(
+                    cw & (NVME_SMART_CRIT_TEMPERATURE), true);
 
-                  self->NVMeStatus::degradesFault(
-                      cw & (NVME_SMART_CRIT_DEGRADED), true);
+                self->NVMeStatus::degradesFault(cw & (NVME_SMART_CRIT_DEGRADED),
+                                                true);
 
-                  self->NVMeStatus::mediaFault(cw & ((NVME_SMART_CRIT_MEDIA)),
-                                               true);
+                self->NVMeStatus::mediaFault(cw & ((NVME_SMART_CRIT_MEDIA)),
+                                             true);
 
-                  self->NVMeStatus::smartWarnings(std::to_string(cw), true);
+                self->NVMeStatus::smartWarnings(std::to_string(cw), true);
 
-                  if (cw != 0)
-                  {
-                      self->markStatus("warning");
-                  }
-                  else
-                  {
-                      self->markStatus("ok");
-                  }
-                  self->generateRedfishEventbySmart(cw);
-              }
-              self->smartWarning = cw;
-              boost::multiprecision::uint128_t powerOnHours;
-              memcpy((void*)&powerOnHours, log->power_on_hours,
-                     sizeof(powerOnHours));
-              self->pollDrive();
-            });
+                if (cw != 0)
+                {
+                    self->markStatus("warning");
+                }
+                else
+                {
+                    self->markStatus("ok");
+                }
+                self->generateRedfishEventbySmart(cw);
+            }
+            self->smartWarning = cw;
+            boost::multiprecision::uint128_t powerOnHours;
+            memcpy((void*)&powerOnHours, log->power_on_hours,
+                   sizeof(powerOnHours));
+            self->pollDrive();
+        });
     });
 }
 
@@ -671,59 +674,57 @@ void NVMeDevice::erase(uint16_t overwritePasses, EraseMethod type)
 
     if (type == EraseMethod::Overwrite)
     {
-        uint32_t pattern =  ~0x04030201;
+        uint32_t pattern = ~0x04030201;
         intf->adminSanitize(
             ctrl, NVME_SANITIZE_SANACT_START_OVERWRITE, overwritePasses,
             pattern,
-            [self{shared_from_this()}, type](
-                const std::error_code& ec,
-                __attribute__((unused)) std::span<uint8_t> status) {
-                if (ec)
-                {
-                    self->Progress::status(OperationStatus::Failed);
-                    self->inProgress = false;
-                    lg2::error("fail to do sanitize(Overwite)");
-                    return;
-                }
-                self->updateSanitizeStatus(type);
-            });
+            [self{shared_from_this()},
+             type](const std::error_code& ec,
+                   __attribute__((unused)) std::span<uint8_t> status) {
+            if (ec)
+            {
+                self->Progress::status(OperationStatus::Failed);
+                self->inProgress = false;
+                lg2::error("fail to do sanitize(Overwite)");
+                return;
+            }
+            self->updateSanitizeStatus(type);
+        });
     }
     if (type == EraseMethod::CryptoErase)
     {
         intf->adminSanitize(
             ctrl, NVME_SANITIZE_SANACT_START_CRYPTO_ERASE, 0, 0,
-            [self{shared_from_this()}, type](
-                const std::error_code& ec,
-                __attribute__((unused)) std::span<uint8_t> status) {
-                if (ec)
-                {
-                    self->Progress::status(OperationStatus::Failed);
-                    self->inProgress = false;
-                    lg2::error("fail to do sanitize(CryptoErase)");
-                    return;
-                }
-                self->updateSanitizeStatus(type);
-            });
+            [self{shared_from_this()},
+             type](const std::error_code& ec,
+                   __attribute__((unused)) std::span<uint8_t> status) {
+            if (ec)
+            {
+                self->Progress::status(OperationStatus::Failed);
+                self->inProgress = false;
+                lg2::error("fail to do sanitize(CryptoErase)");
+                return;
+            }
+            self->updateSanitizeStatus(type);
+        });
     }
     if (type == EraseMethod::BlockErase)
     {
         intf->adminSanitize(
             ctrl, NVME_SANITIZE_SANACT_START_BLOCK_ERASE, 0, 0,
-            [self{shared_from_this()}, type](
-                const std::error_code& ec,
-                __attribute__((unused)) std::span<uint8_t> status) {
-                if (ec)
-                {
-                    self->Progress::status(OperationStatus::Failed);
-                    self->inProgress = false;
-                    lg2::error("fail to do sanitize(BlockErase)");
-                    return;
-                }
-                self->updateSanitizeStatus(type);
-            });
+            [self{shared_from_this()},
+             type](const std::error_code& ec,
+                   __attribute__((unused)) std::span<uint8_t> status) {
+            if (ec)
+            {
+                self->Progress::status(OperationStatus::Failed);
+                self->inProgress = false;
+                lg2::error("fail to do sanitize(BlockErase)");
+                return;
+            }
+            self->updateSanitizeStatus(type);
+        });
     }
 }
 
-NVMeDevice::~NVMeDevice()
-{
-}
+NVMeDevice::~NVMeDevice() {}

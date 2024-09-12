@@ -1,6 +1,5 @@
-#include <NVMeDevice.hpp>
 #include <MCTPDiscovery.hpp>
-
+#include <NVMeDevice.hpp>
 #include <boost/asio/steady_timer.hpp>
 
 #include <iostream>
@@ -30,7 +29,7 @@ static void handleEmEndpoints(const ManagedObjectType& objData)
         }
 
         ep = data.find("xyz.openbmc_project.Inventory.Decorator.LocationCode");
-        if ( ep != data.end())
+        if (ep != data.end())
         {
             const Properties& prop = ep->second;
             auto findProp = prop.find("LocationCode");
@@ -41,7 +40,7 @@ static void handleEmEndpoints(const ManagedObjectType& objData)
             loc = std::get<std::string>(findProp->second);
         }
         ep = data.find("xyz.openbmc_project.Inventory.Decorator.Location");
-        if ( ep != data.end())
+        if (ep != data.end())
         {
             const Properties& prop = ep->second;
             auto findProp = prop.find("LocationType");
@@ -52,7 +51,7 @@ static void handleEmEndpoints(const ManagedObjectType& objData)
             locationType = std::get<std::string>(findProp->second);
         }
         ep = data.find("xyz.openbmc_project.Inventory.Decorator.I2CDevice");
-        if ( ep != data.end())
+        if (ep != data.end())
         {
             const Properties& prop = ep->second;
             auto findProp = prop.find("Bus");
@@ -61,7 +60,7 @@ static void handleEmEndpoints(const ManagedObjectType& objData)
             bus = std::get<uint64_t>(findProp->second);
         }
         ep = data.find("xyz.openbmc_project.Inventory.Item.Drive");
-        if ( ep != data.end())
+        if (ep != data.end())
         {
             const Properties& prop = ep->second;
             auto findProp = prop.find("FormFactor");
@@ -71,17 +70,19 @@ static void handleEmEndpoints(const ManagedObjectType& objData)
             }
             form = std::get<std::string>(findProp->second);
         }
-        // To support a design that NVMe drives are on a backplane rather than baseboard/DC-SCM.
-        // Get the associations from Dbus object, and assign associations for NVMe drive.
+        // To support a design that NVMe drives are on a backplane rather than
+        // baseboard/DC-SCM. Get the associations from Dbus object, and assign
+        // associations for NVMe drive.
         ep = data.find("xyz.openbmc_project.Association.Definitions");
-        if ( ep != data.end())
+        if (ep != data.end())
         {
             const Properties& prop = ep->second;
             auto findProp = prop.find("Associations");
             if (findProp != prop.end())
             {
-                const auto assocs = std::get<std::vector<std::tuple<
-                                    std::string, std::string, std::string>>>(findProp->second);
+                const auto assocs = std::get<std::vector<
+                    std::tuple<std::string, std::string, std::string>>>(
+                    findProp->second);
                 for (const auto& assoc : assocs)
                 {
                     if (std::get<1>(assoc) == "containing")
@@ -121,12 +122,11 @@ static void handleEmEndpoints(const ManagedObjectType& objData)
 void collectInventory(
     std::shared_ptr<sdbusplus::asio::connection>& dbusConnection)
 {
-
     auto getter = std::make_shared<getObjects>(
         dbusConnection,
         std::move([&dbusConnection](const ManagedObjectType& endpoints) {
-            handleEmEndpoints(endpoints);
-        }));
+        handleEmEndpoints(endpoints);
+    }));
     getter->getConfiguration(std::vector<std::string>{
         "xyz.openbmc_project.Inventory.Item.Drive",
         "xyz.openbmc_project.Inventory.Item.NVMe",
@@ -134,7 +134,7 @@ void collectInventory(
         "xyz.openbmc_project.Inventory.Decorator.LocationCode",
         "xyz.openbmc_project.Inventory.Decorator.Location",
         "xyz.openbmc_project.Association.Definitions",
-        });
+    });
 }
 
 static void handleMCTPEndpoints(
@@ -144,11 +144,11 @@ static void handleMCTPEndpoints(
 {
     for (const auto& [path, epData] : mctpEndpoints)
     {
-        bool nvmeCap= false;
+        bool nvmeCap = false;
         size_t eid = 0;
         std::vector<uint8_t> addr;
         auto ep = epData.find(NVMeDevice::mctpEpInterface);
-        if ( ep != epData.end())
+        if (ep != epData.end())
         {
             const Properties& prop = ep->second;
             auto findEid = prop.find("EID");
@@ -160,8 +160,10 @@ static void handleMCTPEndpoints(
             if (findTypes == prop.end())
                 continue;
             auto msgTypes = std::get<std::vector<uint8_t>>(findTypes->second);
-            std::vector<uint8_t>::iterator it = std::find(msgTypes.begin(), msgTypes.end(), NVME_MI_MSGTYPE_NVME & 0x7F ); 
-            if (it != msgTypes.end()) {
+            std::vector<uint8_t>::iterator it = std::find(
+                msgTypes.begin(), msgTypes.end(), NVME_MI_MSGTYPE_NVME & 0x7F);
+            if (it != msgTypes.end())
+            {
                 nvmeCap = true;
             }
         }
@@ -174,12 +176,15 @@ static void handleMCTPEndpoints(
                 continue;
             addr = std::get<std::vector<uint8_t>>(findAddr->second);
         }
-        if (!nvmeCap) {
-            lg2::info("No supported NVMe-MI message type on EID: {EID}", "EID", eid);
+        if (!nvmeCap)
+        {
+            lg2::info("No supported NVMe-MI message type on EID: {EID}", "EID",
+                      eid);
             continue;
         }
         uint32_t bus = -1;
-        auto findBus = epData.find("xyz.openbmc_project.Inventory.Decorator.I2CDevice");
+        auto findBus =
+            epData.find("xyz.openbmc_project.Inventory.Decorator.I2CDevice");
         if (findBus != epData.end())
         {
             const Properties& prop = findBus->second;
@@ -206,29 +211,24 @@ static void handleMCTPEndpoints(
         {
             lg2::info("Drive has been added on EID: {EID}", "EID", eid);
         }
-
     }
     // collect inventory data from EM
     collectInventory(dbusConnection);
 }
 
 void createDrives(boost::asio::io_service& io,
-                   sdbusplus::asio::object_server& objectServer,
-                   std::shared_ptr<sdbusplus::asio::connection>& dbusConnection)
+                  sdbusplus::asio::object_server& objectServer,
+                  std::shared_ptr<sdbusplus::asio::connection>& dbusConnection)
 {
-
     auto getter = std::make_shared<getObjects>(
-        dbusConnection,
-        std::move([&io, &objectServer, &dbusConnection](
-                      const ManagedObjectType& mctpEndpoints) {
-            handleMCTPEndpoints(io, objectServer, dbusConnection,
-                                       mctpEndpoints);
-        }));
+        dbusConnection, std::move([&io, &objectServer, &dbusConnection](
+                                      const ManagedObjectType& mctpEndpoints) {
+        handleMCTPEndpoints(io, objectServer, dbusConnection, mctpEndpoints);
+    }));
     getter->getConfiguration(std::vector<std::string>{
         "xyz.openbmc_project.MCTP.Endpoint",
         "xyz.openbmc_project.Common.UnixSocket",
-        "xyz.openbmc_project.Inventory.Decorator.I2CDevice"
-        });
+        "xyz.openbmc_project.Inventory.Decorator.I2CDevice"});
 }
 
 static void interfaceRemoved(sdbusplus::message::message& message)
@@ -262,38 +262,37 @@ int main()
 
     std::vector<std::unique_ptr<sdbusplus::bus::match::match>> matches;
 
-    io.post([&]() { 
+    io.post([&]() {
         createDrives(io, objectServer, bus);
         bus->request_name("xyz.openbmc_project.NVMeDevice");
-        });
+    });
 
     boost::asio::steady_timer filterTimer(io);
     std::function<void(sdbusplus::message::message&)> emHandler =
         [&filterTimer, &bus](sdbusplus::message::message&) {
-            filterTimer.expires_from_now(std::chrono::seconds(1));
+        filterTimer.expires_from_now(std::chrono::seconds(1));
 
-            filterTimer.async_wait([&](const boost::system::error_code& ec) {
-                if (ec == boost::asio::error::operation_aborted)
-                {
-                    return; // we're being canceled
-                }
+        filterTimer.async_wait([&](const boost::system::error_code& ec) {
+            if (ec == boost::asio::error::operation_aborted)
+            {
+                return; // we're being canceled
+            }
 
-                if (ec)
-                {
-                    lg2::error("Error: {MSG}", "MSG", ec.message());
-                    return;
-                }
+            if (ec)
+            {
+                lg2::error("Error: {MSG}", "MSG", ec.message());
+                return;
+            }
 
-                // collect inventory data from EM
-                collectInventory(bus);
-            });
-        };
+            // collect inventory data from EM
+            collectInventory(bus);
+        });
+    };
 
     // Add interface for storage inventory
     std::string storagePath = "/xyz/openbmc_project/inventory/item/storage/1";
     std::unique_ptr<Storage> storageIface = std::make_unique<Storage>(
-        static_cast<sdbusplus::bus::bus&>(*bus),
-        storagePath.c_str());
+        static_cast<sdbusplus::bus::bus&>(*bus), storagePath.c_str());
     storageIface->emit_added();
 
     auto emIfaceAddedMatch = std::make_unique<sdbusplus::bus::match::match>(
@@ -305,26 +304,25 @@ int main()
     matches.emplace_back(std::move(emIfaceAddedMatch));
 
     std::function<void(sdbusplus::message::message&)> eventHandler =
-        [&filterTimer, &io, &objectServer,
-         &bus](sdbusplus::message::message&) {
-            // this implicitly cancels the timer
-            filterTimer.expires_from_now(std::chrono::seconds(1));
+        [&filterTimer, &io, &objectServer, &bus](sdbusplus::message::message&) {
+        // this implicitly cancels the timer
+        filterTimer.expires_from_now(std::chrono::seconds(1));
 
-            filterTimer.async_wait([&](const boost::system::error_code& ec) {
-                if (ec == boost::asio::error::operation_aborted)
-                {
-                    return; // we're being canceled
-                }
+        filterTimer.async_wait([&](const boost::system::error_code& ec) {
+            if (ec == boost::asio::error::operation_aborted)
+            {
+                return; // we're being canceled
+            }
 
-                if (ec)
-                {
-                    lg2::error("Error: {MSG}", "MSG", ec.message());
-                    return;
-                }
+            if (ec)
+            {
+                lg2::error("Error: {MSG}", "MSG", ec.message());
+                return;
+            }
 
-                createDrives(io, objectServer, bus);
-            });
-        };
+            createDrives(io, objectServer, bus);
+        });
+    };
 
     auto ifaceAddedMatch = std::make_unique<sdbusplus::bus::match::match>(
         static_cast<sdbusplus::bus::bus&>(*bus),
@@ -340,9 +338,9 @@ int main()
         "type='signal',member='InterfacesRemoved',arg0path='" +
             std::string(mctpEpsPath) + "/'",
         [&filterTimer](sdbusplus::message::message& msg) {
-            filterTimer.cancel();
-            interfaceRemoved(msg);
-        });
+        filterTimer.cancel();
+        interfaceRemoved(msg);
+    });
     matches.emplace_back(std::move(ifaceRemovedMatch));
 
     io.run();
