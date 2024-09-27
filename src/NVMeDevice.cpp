@@ -1,13 +1,13 @@
-#include <NVMeDevice.hpp>
 #include <nvme-mi_config.h>
-#include <dbusutil.hpp>
 
-#include <nlohmann/json.hpp>
+#include <NVMeDevice.hpp>
 #include <boost/multiprecision/cpp_int.hpp>
+#include <dbusutil.hpp>
+#include <nlohmann/json.hpp>
 
-#include <iostream>
-#include <fstream>
 #include <filesystem>
+#include <fstream>
+#include <iostream>
 
 const std::string driveFailureResolution{
     "Ensure all cables are properly and securely connected. Ensure all drives "
@@ -24,6 +24,7 @@ const std::string redfishDriveName{"NVMe Drive"};
 
 const std::string driveConfig{"/usr/share/nvidia-nvme-manager/drive.json"};
 
+const std::uint8_t maxIdentifyCmdRetry = 3;
 const std::uint8_t pollInterval = 5;
 using Level = sdbusplus::xyz::openbmc_project::Logging::server::Entry::Level;
 
@@ -39,7 +40,7 @@ NVMeDevice::NVMeDevice(boost::asio::io_service& io,
     std::enable_shared_from_this<NVMeDevice>(), conn(conn),
     objServer(objectServer), scanTimer(io), driveFunctional(false),
     smartWarning(0xff), inProgress(false), objPath(path), eid(eid), bus(bus),
-    backupDeviceErr(false), temperatureErr(false), degradesErr(false),
+    retry(1), backupDeviceErr(false), temperatureErr(false), degradesErr(false),
     mediaErr(false), capacityErr(false)
 {
     std::filesystem::path p(path);
@@ -228,6 +229,93 @@ inline uint32_t getCurrLinkSpeed(uint8_t speed, uint8_t lanes)
     return base * lanes;
 }
 
+void NVMeDevice::getDriveInfo()
+{
+    getIntf()->adminIdentify(
+        ctrl, nvme_identify_cns::NVME_IDENTIFY_CNS_CTRL, NVME_NSID_NONE, 0,
+        [self{shared_from_this()}](const std::error_code& ec,
+                                   std::span<uint8_t> data) {
+        if (ec)
+        {
+            // Identify command's length is up to 4K. There's possibility
+            // to get I2C transcation timeout during the transmission.
+            // Implement retry method.
+            lg2::error("eid:{ID} Retry Identify command {COUNT} times", "ID",
+                       self->eid, "COUNT", self->retry);
+            if (self->retry < maxIdentifyCmdRetry)
+            {
+                self->retry++;
+                self->getDriveInfo();
+            }
+            else
+            {
+                // give up and move forward next command.
+                self->retry = 0;
+                self->getDriveLink();
+            }
+            return;
+        }
+
+        struct nvme_id_ctrl* id = (struct nvme_id_ctrl*)data.data();
+
+        self->Asset::manufacturer(self->getManufacture(id->vid), true);
+        self->Asset::serialNumber(self->stripString(id->sn, sizeof(id->sn)),
+                                  true);
+        self->Asset::model(self->stripString(id->mn, sizeof(id->mn)), true);
+
+        std::string fr;
+        fr.assign(id->fr, id->fr + 8);
+        self->Version::version(fr, true);
+
+        uint64_t drive_capacity[2];
+        memcpy(&drive_capacity, id->tnvmcap, 16);
+
+        /* 8 bytes presenting the drive capacity is enough to support all
+         * drives outside market.
+         */
+        self->Drive::capacity(drive_capacity[0], true);
+
+        // check the drive sanitize capability
+        std::vector<EraseMethod> saniCap;
+        if (id->sanicap & (NVME_CTRL_SANICAP_OWS))
+        {
+            saniCap.push_back(EraseMethod::Overwrite);
+        }
+        if (id->sanicap & (NVME_CTRL_SANICAP_BES))
+        {
+            saniCap.push_back(EraseMethod::BlockErase);
+        }
+        if (id->sanicap & (NVME_CTRL_SANICAP_CES))
+        {
+            saniCap.push_back(EraseMethod::CryptoErase);
+        }
+        self->SecureErase::sanitizeCapability(saniCap, true);
+        self->setNodmmas(id->sanicap);
+
+        self->getDriveLink();
+    });
+}
+
+void NVMeDevice::getDriveLink()
+{
+    intf->miPCIePortInformation(
+        [self{shared_from_this()}](const std::error_code& err,
+                                   nvme_mi_read_port_info* port) {
+        if (err)
+        {
+            lg2::error("eid:{ID} - fail to get PCIePortInformation", "ID",
+                       self->eid);
+            self->pollDrive();
+            return;
+        }
+        self->PortInfo::maxSpeed(
+            getMaxLinkSpeed(port->pcie.sls, port->pcie.mlw), true);
+        self->PortInfo::currentSpeed(
+            getCurrLinkSpeed(port->pcie.cls, port->pcie.nlw), true);
+        self->pollDrive();
+    });
+}
+
 void NVMeDevice::initialize()
 {
     presence = 0;
@@ -243,8 +331,8 @@ void NVMeDevice::initialize()
         if (ec || ctrlList.size() == 0)
         {
             lg2::error(
-                "fail to scan controllers for the nvme subsystem {ERR}: {MSG}",
-                "ERR", ec.value(), "MSG", ec.message());
+                "eid:{ID} - fail to scan controllers for the nvme subsystem {ERR}: {MSG}",
+                "ID", self->eid, "ERR", ec.value(), "MSG", ec.message());
             self->presence = false;
             self->Item::present(false, true);
             return;
@@ -253,69 +341,7 @@ void NVMeDevice::initialize()
         self->Item::present(true, true);
 
         self->ctrl = ctrlList.back();
-        self->getIntf()->adminIdentify(
-            self->ctrl, nvme_identify_cns::NVME_IDENTIFY_CNS_CTRL,
-            NVME_NSID_NONE, 0,
-            [self{self->shared_from_this()}](const std::error_code& ec,
-                                             std::span<uint8_t> data) {
-            if (ec)
-            {
-                lg2::error("fail to do Identify command");
-                return;
-            }
-
-            struct nvme_id_ctrl* id = (struct nvme_id_ctrl*)data.data();
-
-            self->Asset::manufacturer(self->getManufacture(id->vid), true);
-            self->Asset::serialNumber(self->stripString(id->sn, sizeof(id->sn)),
-                                      true);
-            self->Asset::model(self->stripString(id->mn, sizeof(id->mn)), true);
-
-            std::string fr;
-            fr.assign(id->fr, id->fr + 8);
-            self->Version::version(fr, true);
-
-            uint64_t drive_capacity[2];
-            memcpy(&drive_capacity, id->tnvmcap, 16);
-
-            /* 8 bytes presenting the drive capacity is enough to support all
-             * drives outside market.
-             */
-            self->Drive::capacity(drive_capacity[0], true);
-
-            // check the drive sanitize capability
-            std::vector<EraseMethod> saniCap;
-            if (id->sanicap & (NVME_CTRL_SANICAP_OWS))
-            {
-                saniCap.push_back(EraseMethod::Overwrite);
-            }
-            if (id->sanicap & (NVME_CTRL_SANICAP_BES))
-            {
-                saniCap.push_back(EraseMethod::BlockErase);
-            }
-            if (id->sanicap & (NVME_CTRL_SANICAP_CES))
-            {
-                saniCap.push_back(EraseMethod::CryptoErase);
-            }
-            self->SecureErase::sanitizeCapability(saniCap, true);
-            self->setNodmmas(id->sanicap);
-        });
-    });
-    intf->miPCIePortInformation(
-        [self{shared_from_this()}](__attribute__((unused))
-                                   const std::error_code& err,
-                                   nvme_mi_read_port_info* port) {
-        if (err)
-        {
-            lg2::error("fail to get PCIePortInformation");
-            self->pollDrive();
-            return;
-        }
-        self->PortInfo::maxSpeed(
-            getMaxLinkSpeed(port->pcie.sls, port->pcie.mlw), true);
-        self->PortInfo::currentSpeed(
-            getCurrLinkSpeed(port->pcie.cls, port->pcie.nlw), true);
-        self->pollDrive();
+        self->getDriveInfo();
     });
 }
 
