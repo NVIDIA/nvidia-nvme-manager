@@ -22,6 +22,8 @@
 
 const constexpr char* inventoryPath = "/xyz/openbmc_project/inventory";
 
+using AssociationList =
+    std::vector<std::tuple<std::string, std::string, std::string>>;
 using BasicVariantType =
     std::variant<std::vector<std::string>, std::vector<uint8_t>, std::string,
                  int64_t, uint64_t, int32_t, uint32_t, int16_t, uint16_t,
@@ -35,8 +37,6 @@ using GetSubTreeType = std::vector<
     std::pair<std::string,
               std::vector<std::pair<std::string, std::vector<std::string>>>>>;
 using Association = std::tuple<std::string, std::string, std::string>;
-using AssociationList =
-    std::vector<std::tuple<std::string, std::string, std::string>>;
 
 void createAssociation(
     std::shared_ptr<sdbusplus::asio::dbus_interface>& association,

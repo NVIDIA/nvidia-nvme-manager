@@ -1,6 +1,7 @@
 #include "NVMeIntf.hpp"
 
 #include <boost/asio.hpp>
+#include <sdbusplus/asio/object_server.hpp>
 #include <sdbusplus/bus.hpp>
 
 #include <thread>
