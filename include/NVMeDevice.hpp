@@ -80,6 +80,8 @@ class NVMeDevice :
     NVMeDevice& operator=(const NVMeDevice& other) = delete;
 
     void initialize();
+    void getDriveInfo(void);
+    void getDriveLink(void);
     void pollDrive(void);
     void markFunctional(bool functional);
     void markStatus(std::string status);
@@ -188,6 +190,7 @@ class NVMeDevice :
     std::string objPath;
     uint8_t eid;
     uint32_t bus;
+    uint8_t retry;
 
     // flag of no-deallocate modifies meida after sanitize(NODMMAS)
     uint32_t nodmmas;
