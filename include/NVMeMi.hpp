@@ -24,7 +24,7 @@ class NVMeMi : public NVMeMiIntf, public std::enable_shared_from_this<NVMeMi>
                                        const std::vector<nvme_mi_ctrl_t>&)>
                         cb) override;
     void adminIdentify(nvme_mi_ctrl_t ctrl, nvme_identify_cns cns,
-                       uint32_t nsid, uint16_t cntid,
+                       uint32_t nsid, uint16_t cntid, uint16_t read_length,
                        std::function<void(const std::error_code&,
                                           std::span<uint8_t>)>&& cb) override;
     void adminGetLogPage(nvme_mi_ctrl_t ctrl, nvme_cmd_get_log_lid lid,
@@ -109,4 +109,14 @@ class NVMeMi : public NVMeMiIntf, public std::enable_shared_from_this<NVMeMi>
     void post(std::function<void(void)>&& func);
 
     std::error_code try_post(std::function<void(void)>&& func);
+
+    void adminIdentifyFull(
+        nvme_mi_ctrl_t ctrl, nvme_identify_cns cns, uint32_t nsid,
+        uint16_t cntid,
+        std::function<void(const std::error_code&, std::span<uint8_t>)>&& cb);
+
+    void adminIdentifyPartial(
+        nvme_mi_ctrl_t ctrl, nvme_identify_cns cns, uint32_t nsid,
+        uint16_t cntid, uint16_t read_length,
+        std::function<void(const std::error_code&, std::span<uint8_t>)>&& cb);
 };

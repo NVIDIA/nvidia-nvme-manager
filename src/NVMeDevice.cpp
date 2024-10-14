@@ -233,6 +233,7 @@ void NVMeDevice::getDriveInfo()
 {
     getIntf()->adminIdentify(
         ctrl, nvme_identify_cns::NVME_IDENTIFY_CNS_CTRL, NVME_NSID_NONE, 0,
+        identifyRspLength,
         [self{shared_from_this()}](const std::error_code& ec,
                                    std::span<uint8_t> data) {
         if (ec)

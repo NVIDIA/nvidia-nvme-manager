@@ -171,7 +171,7 @@ class NVMeMiIntf
 
     virtual void adminIdentify(
         nvme_mi_ctrl_t ctrl, nvme_identify_cns cns, uint32_t nsid,
-        uint16_t cntid,
+        uint16_t cntid, uint16_t read_length,
         std::function<void(const std::error_code&, std::span<uint8_t>)>&&
             cb) = 0;
     virtual void adminGetLogPage(
