@@ -363,6 +363,7 @@ void NVMeMi::miScanCtrl(std::function<void(const std::error_code&,
 
 void NVMeMi::adminIdentify(
     nvme_mi_ctrl_t ctrl, nvme_identify_cns cns, uint32_t nsid, uint16_t cntid,
+    uint16_t read_length,
     std::function<void(const std::error_code&, std::span<uint8_t>)>&& cb)
 {
     if (!nvmeEP)
@@ -373,53 +374,44 @@ void NVMeMi::adminIdentify(
         });
         return;
     }
+
+    lg2::debug("[eid:{EID}] identify cmd resp length: {RSPLEN}", "EID",
+               static_cast<int>(eid), "RSPLEN",
+               static_cast<unsigned int>(read_length));
+
+    if ((read_length > 0) && (read_length < NVME_IDENTIFY_DATA_SIZE))
+        NVMeMi::adminIdentifyPartial(ctrl, cns, nsid, cntid, read_length,
+                                     std::move(cb));
+    else
+        NVMeMi::adminIdentifyFull(ctrl, cns, nsid, cntid, std::move(cb));
+}
+
+void NVMeMi::adminIdentifyFull(
+    nvme_mi_ctrl_t ctrl, nvme_identify_cns cns, uint32_t nsid, uint16_t cntid,
+    std::function<void(const std::error_code&, std::span<uint8_t>)>&& cb)
+{
     try
     {
         post([ctrl, cns, nsid, cntid, self{shared_from_this()},
               cb{std::move(cb)}]() {
             int rc = 0;
             std::vector<uint8_t> data;
-            switch (cns)
-            {
-                case NVME_IDENTIFY_CNS_SECONDARY_CTRL_LIST:
-                {
-                    data.resize(sizeof(nvme_secondary_ctrl_list));
-                    nvme_identify_args args{};
-                    memset(&args, 0, sizeof(args));
-                    args.result = nullptr;
-                    args.data = data.data();
-                    args.args_size = sizeof(args);
-                    args.cns = cns;
-                    args.csi = NVME_CSI_NVM;
-                    args.nsid = nsid;
-                    args.cntid = cntid;
-                    args.cns_specific_id = NVME_CNSSPECID_NONE;
-                    args.uuidx = NVME_UUID_NONE,
 
-                    rc = nvme_mi_admin_identify_partial(ctrl, &args, 0,
-                                                        data.size());
+            data.resize(NVME_IDENTIFY_DATA_SIZE);
+            nvme_identify_args args{};
+            memset(&args, 0, sizeof(args));
+            args.result = nullptr;
+            args.data = data.data();
+            args.args_size = sizeof(args);
+            args.cns = cns;
+            args.csi = NVME_CSI_NVM;
+            args.nsid = nsid;
+            args.cntid = cntid;
+            args.cns_specific_id = NVME_CNSSPECID_NONE;
+            args.uuidx = NVME_UUID_NONE,
 
-                    break;
-                }
+            rc = nvme_mi_admin_identify(ctrl, &args);
 
-                default:
-                {
-                    data.resize(NVME_IDENTIFY_DATA_SIZE);
-                    nvme_identify_args args{};
-                    memset(&args, 0, sizeof(args));
-                    args.result = nullptr;
-                    args.data = data.data();
-                    args.args_size = sizeof(args);
-                    args.cns = cns;
-                    args.csi = NVME_CSI_NVM;
-                    args.nsid = nsid;
-                    args.cntid = cntid;
-                    args.cns_specific_id = NVME_CNSSPECID_NONE;
-                    args.uuidx = NVME_UUID_NONE,
-
-                    rc = nvme_mi_admin_identify(ctrl, &args);
-                }
-            }
             if (rc < 0)
             {
                 lg2::error(
@@ -438,6 +430,84 @@ void NVMeMi::adminIdentify(
                     statusToString(static_cast<nvme_mi_resp_status>(rc));
                 lg2::error(
                     "[addr:{ADDR}, eid:{EID}] fail to do nvme identify: {MSG}",
+                    "ADDR", self->addr, "EID", static_cast<int>(self->eid),
+                    "MSG", errMsg);
+                self->io.post([cb{std::move(cb)}]() {
+                    cb(std::make_error_code(std::errc::bad_message), {});
+                });
+                return;
+            }
+
+            self->io.post([cb{std::move(cb)}, data{std::move(data)}]() mutable {
+                std::span<uint8_t> span{data.data(), data.size()};
+                cb({}, span);
+            });
+        });
+    }
+    catch (const std::runtime_error& e)
+    {
+        lg2::error("[addr:{ADDR}, eid:{EID}] {MSG}", "ADDR", addr, "EID",
+                   static_cast<int>(eid), "MSG", e.what());
+        io.post([cb{std::move(cb)}]() {
+            cb(std::make_error_code(std::errc::no_such_device), {});
+        });
+        return;
+    }
+}
+
+void NVMeMi::adminIdentifyPartial(
+    nvme_mi_ctrl_t ctrl, nvme_identify_cns cns, uint32_t nsid, uint16_t cntid,
+    uint16_t read_length,
+    std::function<void(const std::error_code&, std::span<uint8_t>)>&& cb)
+{
+    try
+    {
+        post([ctrl, cns, nsid, cntid, read_length, self{shared_from_this()},
+              cb{std::move(cb)}]() {
+            int rc = 0;
+            std::vector<uint8_t> data;
+            switch (cns)
+            {
+                case NVME_IDENTIFY_CNS_SECONDARY_CTRL_LIST:
+                    data.resize(sizeof(nvme_secondary_ctrl_list));
+                    break;
+
+                default:
+                    data.resize(read_length);
+            }
+
+            nvme_identify_args args{};
+            memset(&args, 0, sizeof(args));
+            args.result = nullptr;
+            args.data = data.data();
+            args.args_size = sizeof(args);
+            args.cns = cns;
+            args.csi = NVME_CSI_NVM;
+            args.nsid = nsid;
+            args.cntid = cntid;
+            args.cns_specific_id = NVME_CNSSPECID_NONE;
+            args.uuidx = NVME_UUID_NONE,
+
+            rc = nvme_mi_admin_identify_partial(ctrl, &args, 0, data.size());
+
+            if (rc < 0)
+            {
+                lg2::error(
+                    "[addr:{ADDR}, eid:{EID}] fail to do nvme identify partial: {ERR}",
+                    "ADDR", self->addr, "EID", static_cast<int>(self->eid),
+                    "ERR", std::strerror(errno));
+                self->io.post([cb{std::move(cb)}, last_errno{errno}]() {
+                    cb(std::make_error_code(static_cast<std::errc>(last_errno)),
+                       {});
+                });
+                return;
+            }
+            else if (rc > 0)
+            {
+                std::string_view errMsg =
+                    statusToString(static_cast<nvme_mi_resp_status>(rc));
+                lg2::error(
+                    "[addr:{ADDR}, eid:{EID}] fail to do nvme identify partial: {MSG}",
                     "ADDR", self->addr, "EID", static_cast<int>(self->eid),
                     "MSG", errMsg);
                 self->io.post([cb{std::move(cb)}]() {
