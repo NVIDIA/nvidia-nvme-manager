@@ -713,7 +713,11 @@ void NVMeMi::adminGetLogPage(
                     data.resize(sizeof(nvme_smart_log));
                     nvme_smart_log* log =
                         reinterpret_cast<nvme_smart_log*>(data.data());
-                    rc = nvme_mi_admin_get_log_smart(ctrl, nsid, false, log);
+
+                    constexpr int read_len = sizeof(nvme_smart_log) -
+                                             sizeof(log->rsvd232);
+                    rc = nvme_mi_admin_get_nsid_log(ctrl, false, lid, nsid,
+                                                    read_len, log);
                     if (rc)
                     {
                         lg2::error(
