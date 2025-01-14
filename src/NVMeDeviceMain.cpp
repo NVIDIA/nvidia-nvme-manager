@@ -1,4 +1,6 @@
 
+#include <nvme-mi_config.h>
+
 #include <MCTPDiscovery.hpp>
 #include <NVMeDevice.hpp>
 #include <boost/asio/steady_timer.hpp>
@@ -27,29 +29,6 @@ static void handleEmEndpoints(const ManagedObjectType& objData)
         if (ep == data.end())
         {
             continue;
-        }
-
-        ep = data.find("xyz.openbmc_project.Inventory.Decorator.LocationCode");
-        if (ep != data.end())
-        {
-            const Properties& prop = ep->second;
-            auto findProp = prop.find("LocationCode");
-            if (findProp == prop.end())
-            {
-                continue;
-            }
-            loc = std::get<std::string>(findProp->second);
-        }
-        ep = data.find("xyz.openbmc_project.Inventory.Decorator.Location");
-        if (ep != data.end())
-        {
-            const Properties& prop = ep->second;
-            auto findProp = prop.find("LocationType");
-            if (findProp == prop.end())
-            {
-                continue;
-            }
-            locationType = std::get<std::string>(findProp->second);
         }
         ep = data.find("xyz.openbmc_project.Inventory.Decorator.I2CDevice");
         if (ep != data.end())
@@ -101,7 +80,6 @@ static void handleEmEndpoints(const ManagedObjectType& objData)
             {
                 continue;
             }
-            context->updateLocation(loc, locationType);
             context->updateFormFactor(form);
             if (!driveAssoc.empty())
             {
@@ -200,7 +178,8 @@ static void handleMCTPEndpoints(
         {
             lg2::info("Drive is added on EID: {EID}", "EID", eid);
 
-            std::string p("/xyz/openbmc_project/inventory/item/drive/");
+            std::string p("/xyz/openbmc_project/inventory/system/nvme/");
+            p += std::string(drivePrefix);
             p += std::to_string(eid);
             auto DrivePtr = std::make_shared<NVMeDevice>(
                 io, objectServer, dbusConnection, eid, bus, std::move(addr), p);
@@ -259,7 +238,7 @@ int main()
     boost::asio::io_service io;
     auto bus = std::make_shared<sdbusplus::asio::connection>(io);
     sdbusplus::asio::object_server objectServer(bus, true);
-    objectServer.add_manager("/xyz/openbmc_project/inventory/item/drive");
+    objectServer.add_manager("/xyz/openbmc_project/inventory/system/nvme");
 
     std::vector<std::unique_ptr<sdbusplus::bus::match::match>> matches;
 
