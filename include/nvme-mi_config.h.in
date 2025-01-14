@@ -6,4 +6,5 @@
 constexpr const char *driveLocation = @PLATFORM_DRIVE_LOCATION@;
 constexpr const uint32_t driveSanitizeTime = @DRIVE_SANITIZE_TIME@;
 constexpr const uint32_t identifyRspLength = @IDENTIFY_RSP_LENGTH@;
+constexpr const char *drivePrefix = @PLATFORM_DRIVE_PREFIX@;
 // clang-format on

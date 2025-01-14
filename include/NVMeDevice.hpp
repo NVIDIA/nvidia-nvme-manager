@@ -53,8 +53,7 @@ using Storage =
 
 using NvmeInterfaces = sdbusplus::server::object::object<
     Item, StorageController, PortInfo, Drive, Health, OperationalStatus, Asset,
-    Version, NVMeStatus, LocationCode, Location, Associations, Progress,
-    SecureErase, Operation>;
+    Version, NVMeStatus, Associations, Progress, SecureErase, Operation>;
 using AssociationList =
     std::vector<std::tuple<std::string, std::string, std::string>>;
 
@@ -138,7 +137,6 @@ class NVMeDevice :
     }
 
     void updatePercent(uint32_t endTime);
-    void updateLocation(std::string loc, std::string locType);
     void updateFormFactor(std::string form);
     void updateDriveAssociations();
     void erase(uint16_t overwritePasses, EraseMethod eraseType);
