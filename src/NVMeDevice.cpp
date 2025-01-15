@@ -132,20 +132,6 @@ std::string NVMeDevice::stripString(char* src, size_t len)
     return s;
 }
 
-void NVMeDevice::updateLocation(std::string location, std::string locationType)
-{
-    LocationCode::locationCode(location, false);
-    if (locationType ==
-        "xyz.openbmc_project.Inventory.Decorator.Location.LocationTypes.Slot")
-    {
-        Location::locationType(Location::LocationTypes::Slot, false);
-    }
-    else
-    {
-        Location::locationType(Location::LocationTypes::Unknown, false);
-    }
-}
-
 void NVMeDevice::updateFormFactor(std::string form)
 {
     size_t pos = form.find_last_of(".");
