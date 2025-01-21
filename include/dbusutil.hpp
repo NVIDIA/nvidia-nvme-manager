@@ -2,6 +2,7 @@
 
 #include <phosphor-logging/lg2.hpp>
 #include <sdbusplus/bus.hpp>
+#include <sdbusplus/exception.hpp>
 #include <xyz/openbmc_project/Logging/Entry/server.hpp>
 
 const std::string resourceErrorDetected{
