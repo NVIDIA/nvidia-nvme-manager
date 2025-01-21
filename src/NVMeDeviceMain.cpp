@@ -221,15 +221,23 @@ static void interfaceRemoved(sdbusplus::message::message& message)
 
     std::string objectName;
     boost::container::flat_map<std::string, std::variant<size_t>> values;
-    message.read(objectName, values);
 
-    auto findEid = values.find("EID");
-    if (findEid != values.end())
+    try
     {
-        auto obj = findEid->second;
-        auto eid = std::get<size_t>(obj);
-        lg2::info("Remove Drive:{EID}.", "EID", eid);
-        // Todo: implement it for drive hotplug.
+        message.read(objectName, values);
+
+        auto findEid = values.find("EID");
+        if (findEid != values.end())
+        {
+            auto obj = findEid->second;
+            auto eid = std::get<size_t>(obj);
+            lg2::info("Remove Drive:{EID}.", "EID", eid);
+            // Todo: implement it for drive hotplug.
+        }
+    }
+    catch (const sdbusplus::exception::SdBusError& e)
+    {
+        lg2::error("SdBusError: {ERRMSG}", "ERRMSG", e.what());
     }
 }
 
