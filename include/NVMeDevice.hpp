@@ -180,6 +180,7 @@ class NVMeDevice :
 
     AssociationList assocs;
     nvme_mi_ctrl_t ctrl;
+    bool initialized;
     bool presence;
     bool inProgress;
     std::string objPath;
