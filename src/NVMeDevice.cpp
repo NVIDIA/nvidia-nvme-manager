@@ -309,7 +309,7 @@ void NVMeDevice::getDriveLink()
 
 void NVMeDevice::initialize()
 {
-    if (initialized == true)
+    if (initialized)
     {
         return;
     }
