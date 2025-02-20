@@ -39,9 +39,9 @@ NVMeDevice::NVMeDevice(boost::asio::io_service& io,
                    NvmeInterfaces::action::defer_emit),
     std::enable_shared_from_this<NVMeDevice>(), conn(conn),
     objServer(objectServer), scanTimer(io), driveFunctional(false),
-    smartWarning(0xff), inProgress(false), objPath(path), eid(eid), bus(bus),
-    retry(1), backupDeviceErr(false), temperatureErr(false), degradesErr(false),
-    mediaErr(false), capacityErr(false)
+    smartWarning(0xff), initialized(false), inProgress(false), objPath(path),
+    eid(eid), bus(bus), retry(1), backupDeviceErr(false), temperatureErr(false),
+    degradesErr(false), mediaErr(false), capacityErr(false)
 {
     std::filesystem::path p(path);
 
@@ -305,7 +305,12 @@ void NVMeDevice::getDriveLink()
 
 void NVMeDevice::initialize()
 {
-    presence = 0;
+    if (initialized == true)
+    {
+        return;
+    }
+    initialized = true;
+    presence = false;
 
     Drive::type(DriveType::SSD, true);
     Drive::protocol(DriveProtocol::NVMe, true);
