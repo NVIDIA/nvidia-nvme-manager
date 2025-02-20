@@ -10,9 +10,17 @@ class NVMeMi : public NVMeMiIntf, public std::enable_shared_from_this<NVMeMi>
 {
   public:
     NVMeMi(boost::asio::io_context& io,
-           std::shared_ptr<sdbusplus::asio::connection> conn,
-           std::vector<uint8_t> addr, uint8_t eid);
+           const std::shared_ptr<sdbusplus::asio::connection>& conn,
+           std::vector<uint8_t> sockName, uint8_t eid);
     ~NVMeMi() override;
+
+    // Delete copy operations
+    NVMeMi(const NVMeMi&) = delete;
+    NVMeMi& operator=(const NVMeMi&) = delete;
+
+    // Delete move operations since this class likely manages resources
+    NVMeMi(NVMeMi&&) = delete;
+    NVMeMi& operator=(NVMeMi&&) = delete;
 
     void miPCIePortInformation(
         std::function<void(const std::error_code&, nvme_mi_read_port_info*)>&&
@@ -24,11 +32,11 @@ class NVMeMi : public NVMeMiIntf, public std::enable_shared_from_this<NVMeMi>
                                        const std::vector<nvme_mi_ctrl_t>&)>
                         cb) override;
     void adminIdentify(nvme_mi_ctrl_t ctrl, nvme_identify_cns cns,
-                       uint32_t nsid, uint16_t cntid, uint16_t read_length,
+                       uint32_t nsid, uint16_t cntid, uint16_t readLength,
                        std::function<void(const std::error_code&,
                                           std::span<uint8_t>)>&& cb) override;
     void adminGetLogPage(nvme_mi_ctrl_t ctrl, nvme_cmd_get_log_lid lid,
-                         uint32_t nsid, uint8_t lsp, uint16_t lsi,
+                         uint32_t nsid, uint8_t lsp,
                          std::function<void(const std::error_code&,
                                             std::span<uint8_t>)>&& cb) override;
 
@@ -42,29 +50,28 @@ class NVMeMi : public NVMeMiIntf, public std::enable_shared_from_this<NVMeMi>
         std::function<void(const std::error_code&, nvme_status_field)>&& cb)
         override;
 
-    void adminXfer(nvme_mi_ctrl_t ctrl, const nvme_mi_admin_req_hdr& admin_req,
-                   std::span<uint8_t> data, unsigned int timeout_ms,
+    void adminXfer(nvme_mi_ctrl_t ctrl, const nvme_mi_admin_req_hdr& aadminReq,
+                   std::span<uint8_t> data, unsigned int timeoutMs,
                    std::function<void(const std::error_code&,
                                       const nvme_mi_admin_resp_hdr&,
                                       std::span<uint8_t>)>&& cb) override;
 
     void adminSecuritySend(nvme_mi_ctrl_t ctrl, uint8_t proto,
-                           uint16_t proto_specific, std::span<uint8_t> data,
+                           uint16_t protoSpecific, std::span<uint8_t> data,
                            std::function<void(const std::error_code&,
-                                              int nvme_status)>&& cb) override;
+                                              int nnnvmeStatus)>&& cb) override;
 
     void adminSecurityReceive(
-        nvme_mi_ctrl_t ctrl, uint8_t proto, uint16_t proto_specific,
-        uint32_t transfer_length,
-        std::function<void(const std::error_code&, int nvme_status,
+        nvme_mi_ctrl_t ctrl, uint8_t proto, uint16_t protoSpecific,
+        uint32_t transferLength,
+        std::function<void(const std::error_code&, int nvmeStatus,
                            std::span<uint8_t> data)>&& cb) override;
 
   private:
     // the transfer size for nvme mi messages.
     // define in github.com/linux-nvme/libnvme/blob/master/src/nvme/mi.c
+    // NOLINTNEXTLINE(readability-identifier-naming)
     static constexpr int nvme_mi_xfer_size = 4096;
-
-    static nvme_root_t nvmeRoot;
 
     boost::asio::io_context& io;
     std::shared_ptr<sdbusplus::asio::connection> conn;
@@ -74,7 +81,7 @@ class NVMeMi : public NVMeMiIntf, public std::enable_shared_from_this<NVMeMi>
     nvme_mi_ep_t nvmeEP;
 
     int nid;
-    uint8_t eid;
+    uint8_t eid{0};
     std::string addr;
     std::string mctpPath;
 
@@ -84,7 +91,7 @@ class NVMeMi : public NVMeMiIntf, public std::enable_shared_from_this<NVMeMi>
     class Worker
     {
       private:
-        bool workerStop;
+        bool workerStop{};
         std::mutex workerMtx;
         std::condition_variable workerCv;
         boost::asio::io_context workerIO;
@@ -93,6 +100,9 @@ class NVMeMi : public NVMeMiIntf, public std::enable_shared_from_this<NVMeMi>
       public:
         Worker();
         Worker(const Worker&) = delete;
+        Worker& operator=(const Worker&) = delete;
+        Worker(Worker&& other) noexcept;
+        Worker& operator=(Worker&& other) noexcept;
         ~Worker();
         void post(std::function<void(void)>&& func);
     };
@@ -103,12 +113,14 @@ class NVMeMi : public NVMeMiIntf, public std::enable_shared_from_this<NVMeMi>
     // devices on the same bus. Though mctp kernel drive can schedule and
     // sequencialize the transactions but assigning individual worker thread to
     // each EP makes no sense.
-    static std::map<int, std::weak_ptr<Worker>> workerMap;
+    static std::map<int, std::weak_ptr<Worker>>& getWorkerMap();
+
+    static nvme_root_t& getNVMeRoot();
 
     std::shared_ptr<Worker> worker;
     void post(std::function<void(void)>&& func);
 
-    std::error_code try_post(std::function<void(void)>&& func);
+    std::error_code tryPost(std::function<void(void)>&& func);
 
     void adminIdentifyFull(
         nvme_mi_ctrl_t ctrl, nvme_identify_cns cns, uint32_t nsid,
@@ -117,6 +129,6 @@ class NVMeMi : public NVMeMiIntf, public std::enable_shared_from_this<NVMeMi>
 
     void adminIdentifyPartial(
         nvme_mi_ctrl_t ctrl, nvme_identify_cns cns, uint32_t nsid,
-        uint16_t cntid, uint16_t read_length,
+        uint16_t cntid, uint16_t readLength,
         std::function<void(const std::error_code&, std::span<uint8_t>)>&& cb);
 };
