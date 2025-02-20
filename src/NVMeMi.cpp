@@ -195,18 +195,34 @@ void NVMeMi::miPCIePortInformation(
                 });
                 return;
             }
+            // add the delay to ensure the drive can process the command
+            std::this_thread::sleep_for(std::chrono::milliseconds(300));
             struct nvme_mi_read_port_info port
             {};
             memset(&port, 0, sizeof(port));
             for (auto i = 0; i <= ssInfo.nump; i++)
             {
                 auto rc = nvme_mi_mi_read_mi_data_port(self->nvmeEP, i, &port);
-                if (rc != 0)
+                if (rc < 0)
+                {
+                    lg2::error(
+                        "[addr:{ADDR}, eid:{EID}] nvme_mi_mi_read_mi_data_port: {ERR}",
+                        "ADDR", self->addr, "EID", static_cast<int>(self->eid),
+                        "ERR", std::strerror(errno));
+
+                    self->io.post([cb{cb}, lastErrno{errno}]() {
+                        cb(std::make_error_code(
+                               static_cast<std::errc>(lastErrno)),
+                           nullptr);
+                    });
+                    return;
+                }
+                if (rc > 0)
                 {
                     std::string_view errMsg =
                         statusToString(static_cast<nvme_mi_resp_status>(rc));
                     lg2::error(
-                        "[addr:{ADDR}, eid:{EID}] mi_read_mi_data_subsys: {ERR}",
+                        "[addr:{ADDR}, eid:{EID}] nvme_mi_mi_read_mi_data_port: {ERR}",
                         "ADDR", self->addr, "EID", static_cast<int>(self->eid),
                         "ERR", errMsg);
                     self->io.post([cb{cb}]() {
