@@ -55,11 +55,10 @@ class NVMeIntf
         {
             return Protocol::NVMeBasic;
         }
-        else if (std::holds_alternative<std::shared_ptr<NVMeMiIntf>>(interface))
+        if (std::holds_alternative<std::shared_ptr<NVMeMiIntf>>(interface))
         {
             return Protocol::NVMeMI;
         }
-
         throw std::runtime_error("uninitiated NVMeIntf");
     }
 
@@ -93,6 +92,14 @@ class NVMeBasicIntf
     };
 
     NVMeBasicIntf() = default;
+
+    // Delete copy operations
+    NVMeBasicIntf(const NVMeBasicIntf&) = delete;
+    NVMeBasicIntf& operator=(const NVMeBasicIntf&) = delete;
+
+    // Allow move operations
+    NVMeBasicIntf(NVMeBasicIntf&&) = default;
+    NVMeBasicIntf& operator=(NVMeBasicIntf&&) = default;
 
     // The i2c bus number
     virtual int getBus() const = 0;
@@ -171,12 +178,12 @@ class NVMeMiIntf
 
     virtual void adminIdentify(
         nvme_mi_ctrl_t ctrl, nvme_identify_cns cns, uint32_t nsid,
-        uint16_t cntid, uint16_t read_length,
+        uint16_t cntid, uint16_t readLength,
         std::function<void(const std::error_code&, std::span<uint8_t>)>&&
             cb) = 0;
     virtual void adminGetLogPage(
         nvme_mi_ctrl_t ctrl, nvme_cmd_get_log_lid lid, uint32_t nsid,
-        uint8_t lsp, uint16_t lsi,
+        uint8_t lsp,
         std::function<void(const std::error_code&, std::span<uint8_t>)>&&
             cb) = 0;
     virtual void adminFwCommit(nvme_mi_ctrl_t ctrl, nvme_fw_commit_ca action,
@@ -190,14 +197,14 @@ class NVMeMiIntf
             cb) = 0;
 
     virtual void adminSecuritySend(
-        nvme_mi_ctrl_t ctrl, uint8_t proto, uint16_t proto_specific,
+        nvme_mi_ctrl_t ctrl, uint8_t proto, uint16_t protoSpecific,
         std::span<uint8_t> data,
-        std::function<void(const std::error_code&, int nvme_status)>&& cb) = 0;
+        std::function<void(const std::error_code&, int nvmeStatus)>&& cb) = 0;
 
     virtual void adminSecurityReceive(
-        nvme_mi_ctrl_t ctrl, uint8_t proto, uint16_t proto_specific,
-        uint32_t transfer_length,
-        std::function<void(const std::error_code&, int nvme_status,
+        nvme_mi_ctrl_t ctrl, uint8_t proto, uint16_t protoSpecific,
+        uint32_t transferLength,
+        std::function<void(const std::error_code&, int nvmeStatus,
                            const std::span<uint8_t> data)>&& cb) = 0;
 
     /**
@@ -230,9 +237,20 @@ class NVMeMiIntf
      * @ec will be returned on failure.
      */
     virtual void
-        adminXfer(nvme_mi_ctrl_t ctrl, const nvme_mi_admin_req_hdr& admin_req,
-                  std::span<uint8_t> data, unsigned int timeout_ms,
+        adminXfer(nvme_mi_ctrl_t ctrl, const nvme_mi_admin_req_hdr& adminReq,
+                  std::span<uint8_t> data, unsigned int timeoutMs,
                   std::function<void(const std::error_code& ec,
-                                     const nvme_mi_admin_resp_hdr& admin_resp,
-                                     std::span<uint8_t> resp_data)>&& cb) = 0;
+                                     const nvme_mi_admin_resp_hdr& adminResp,
+                                     std::span<uint8_t> respData)>&& cb) = 0;
+
+    // Add special member functions
+    NVMeMiIntf() = default;
+
+    // Delete copy operations
+    NVMeMiIntf(const NVMeMiIntf&) = delete;
+    NVMeMiIntf& operator=(const NVMeMiIntf&) = delete;
+
+    // Allow move operations
+    NVMeMiIntf(NVMeMiIntf&&) = default;
+    NVMeMiIntf& operator=(NVMeMiIntf&&) = default;
 };
