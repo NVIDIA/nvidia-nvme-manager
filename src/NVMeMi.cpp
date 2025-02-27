@@ -741,7 +741,7 @@ void NVMeMi::adminGetLogPage(
 
                     constexpr int readLen = sizeof(nvme_smart_log) -
                                             sizeof(log->rsvd232);
-                    rc = nvme_mi_admin_get_nsid_log(ctrl, false, lid, nsid,
+                    rc = nvme_mi_admin_get_nsid_log(ctrl, true, lid, nsid,
                                                     readLen, log);
                     if (rc != 0)
                     {
