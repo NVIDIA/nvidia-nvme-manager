@@ -68,13 +68,19 @@ void createInventoryAssoc(
     const std::shared_ptr<sdbusplus::asio::dbus_interface>& association,
     const std::string& path);
 
-struct getObjects : std::enable_shared_from_this<getObjects>
+struct GetObjects : std::enable_shared_from_this<GetObjects>
 {
-    getObjects(std::shared_ptr<sdbusplus::asio::connection> connection,
+    GetObjects(std::shared_ptr<sdbusplus::asio::connection> connection,
                std::function<void(ManagedObjectType& resp)>&& callbackFunc) :
         dbusConnection(std::move(connection)),
         callback(std::move(callbackFunc))
     {}
+
+    //~GetObjects() = default;
+    GetObjects(const GetObjects&) = delete;
+    GetObjects& operator=(const GetObjects&) = delete;
+    GetObjects(GetObjects&&) = delete;
+    GetObjects& operator=(GetObjects&&) = delete;
 
     void getPath(const std::string& path, const std::string& interface,
                  const std::string& owner, size_t retries = 5)
@@ -83,7 +89,7 @@ struct getObjects : std::enable_shared_from_this<getObjects>
         {
             retries = 5;
         }
-        std::shared_ptr<getObjects> self = shared_from_this();
+        std::shared_ptr<GetObjects> self = shared_from_this();
 
         self->dbusConnection->async_method_call(
             [self, path, interface, owner,
@@ -94,7 +100,7 @@ struct getObjects : std::enable_shared_from_this<getObjects>
             {
                 lg2::error("Error getting {PATH} : retries left {RETRY}",
                            "PATH", path, "RETRY", retries - 1);
-                if (!retries)
+                if (retries == 0U)
                 {
                     return;
                 }
@@ -127,14 +133,14 @@ struct getObjects : std::enable_shared_from_this<getObjects>
             retries = 5;
         }
 
-        std::shared_ptr<getObjects> self = shared_from_this();
+        std::shared_ptr<GetObjects> self = shared_from_this();
         dbusConnection->async_method_call(
             [self, interfaces, retries](const boost::system::error_code ec,
                                         const GetSubTreeType& ret) {
             if (ec)
             {
                 lg2::error("Error calling mapper");
-                if (!retries)
+                if (retries == 0U)
                 {
                     return;
                 }
@@ -195,7 +201,7 @@ struct getObjects : std::enable_shared_from_this<getObjects>
             "/", 0, interfaces);
     }
 
-    ~getObjects()
+    ~GetObjects()
     {
         callback(respData);
     }
