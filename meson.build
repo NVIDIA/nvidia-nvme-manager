@@ -5,11 +5,11 @@ project(
         'warning_level=3',
         'werror=true',
         'buildtype=debugoptimized',
-        'cpp_std=c++20'
+        'cpp_std=c++23'
     ],
     license: 'Apache-2.0',
     version: '0.1',
-    meson_version: '>=0.58.0',
+    meson_version: '>=1.1.1',
 )
 
 add_project_arguments(

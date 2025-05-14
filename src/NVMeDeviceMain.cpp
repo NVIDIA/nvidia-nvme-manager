@@ -1,4 +1,3 @@
-
 #include <MCTPDiscovery.hpp>
 #include <NVMeDevice.hpp>
 #include <boost/asio/steady_timer.hpp>
@@ -139,7 +138,7 @@ void collectInventory(
 }
 
 static void handleMCTPEndpoints(
-    boost::asio::io_service& io, sdbusplus::asio::object_server& objectServer,
+    boost::asio::io_context& io, sdbusplus::asio::object_server& objectServer,
     std::shared_ptr<sdbusplus::asio::connection>& dbusConnection,
     const ManagedObjectType& mctpEndpoints)
 {
@@ -217,7 +216,7 @@ static void handleMCTPEndpoints(
     collectInventory(dbusConnection);
 }
 
-void createDrives(boost::asio::io_service& io,
+void createDrives(boost::asio::io_context& io,
                   sdbusplus::asio::object_server& objectServer,
                   std::shared_ptr<sdbusplus::asio::connection>& dbusConnection)
 {
@@ -256,14 +255,14 @@ static void interfaceRemoved(sdbusplus::message::message& message)
 
 int main()
 {
-    boost::asio::io_service io;
+    boost::asio::io_context io;
     auto bus = std::make_shared<sdbusplus::asio::connection>(io);
     sdbusplus::asio::object_server objectServer(bus, true);
     objectServer.add_manager("/xyz/openbmc_project/inventory/item/drive");
 
     std::vector<std::unique_ptr<sdbusplus::bus::match::match>> matches;
 
-    io.post([&]() {
+    boost::asio::post(io, [&]() {
         createDrives(io, objectServer, bus);
         bus->request_name("xyz.openbmc_project.NVMeDevice");
     });
@@ -271,7 +270,7 @@ int main()
     boost::asio::steady_timer filterTimer(io);
     std::function<void(sdbusplus::message::message&)> emHandler =
         [&filterTimer, &bus](sdbusplus::message::message&) {
-        filterTimer.expires_from_now(std::chrono::seconds(1));
+        filterTimer.expires_after(std::chrono::seconds(1));
 
         filterTimer.async_wait([&](const boost::system::error_code& ec) {
             if (ec == boost::asio::error::operation_aborted)
@@ -307,7 +306,7 @@ int main()
     std::function<void(sdbusplus::message::message&)> eventHandler =
         [&filterTimer, &io, &objectServer, &bus](sdbusplus::message::message&) {
         // this implicitly cancels the timer
-        filterTimer.expires_from_now(std::chrono::seconds(1));
+        filterTimer.expires_after(std::chrono::seconds(1));
 
         filterTimer.async_wait([&](const boost::system::error_code& ec) {
             if (ec == boost::asio::error::operation_aborted)

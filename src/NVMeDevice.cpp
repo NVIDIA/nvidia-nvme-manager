@@ -30,7 +30,7 @@ using Level = sdbusplus::xyz::openbmc_project::Logging::server::Entry::Level;
 
 using Json = nlohmann::json;
 
-NVMeDevice::NVMeDevice(boost::asio::io_service& io,
+NVMeDevice::NVMeDevice(boost::asio::io_context& io,
                        sdbusplus::asio::object_server& objectServer,
                        std::shared_ptr<sdbusplus::asio::connection>& conn,
                        uint8_t eid, uint32_t bus, std::vector<uint8_t> addr,
@@ -476,7 +476,7 @@ void NVMeDevice::updatePercent(uint32_t endTime)
 
 void NVMeDevice::pollDrive()
 {
-    scanTimer.expires_from_now(std::chrono::seconds(pollInterval));
+    scanTimer.expires_after(std::chrono::seconds(pollInterval));
     scanTimer.async_wait(
         [self{shared_from_this()}](const boost::system::error_code errorCode) {
         if (errorCode == boost::asio::error::operation_aborted)
