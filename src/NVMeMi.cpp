@@ -1,7 +1,6 @@
-
 #include "NVMeMi.hpp"
 
-#include <boost/asio/io_service.hpp>
+#include <boost/asio/io_context.hpp>
 #include <boost/asio/steady_timer.hpp>
 #include <boost/endian.hpp>
 #include <phosphor-logging/elog-errors.hpp>
@@ -110,7 +109,7 @@ void NVMeMi::Worker::post(std::function<void(void)>&& func)
         std::unique_lock<std::mutex> lock(workerMtx);
         if (!workerStop)
         {
-            workerIO.post(std::move(func));
+            boost::asio::post(workerIO, std::move(func));
             workerCv.notify_all();
             return;
         }
@@ -151,7 +150,7 @@ void NVMeMi::miPCIePortInformation(
         lg2::error("[addr:{ADDR}, eid:{EID}] vme endpoint is invalid", "ADDR",
                    addr, "EID", static_cast<int>(eid));
 
-        io.post([cb{std::move(cb)}]() {
+        boost::asio::post(io, [cb{std::move(cb)}]() {
             cb(std::make_error_code(std::errc::no_such_device), nullptr);
         });
         return;
@@ -169,7 +168,7 @@ void NVMeMi::miPCIePortInformation(
                     "ADDR", self->addr, "EID", static_cast<int>(self->eid),
                     "ERR", std::strerror(errno));
 
-                self->io.post([cb{std::move(cb)}, last_errno{errno}]() {
+                boost::asio::post(self->io, [cb{std::move(cb)}, last_errno{errno}]() {
                     cb(std::make_error_code(static_cast<std::errc>(last_errno)),
                        nullptr);
                 });
@@ -184,7 +183,7 @@ void NVMeMi::miPCIePortInformation(
                     "ADDR", self->addr, "EID", static_cast<int>(self->eid),
                     "ERR", errMsg);
 
-                self->io.post([cb{std::move(cb)}]() {
+                boost::asio::post(self->io, [cb{std::move(cb)}]() {
                     cb(std::make_error_code(std::errc::bad_message), nullptr);
                 });
                 return;
@@ -202,7 +201,7 @@ void NVMeMi::miPCIePortInformation(
                         "[addr:{ADDR}, eid:{EID}] mi_read_mi_data_subsys: {ERR}",
                         "ADDR", self->addr, "EID", static_cast<int>(self->eid),
                         "ERR", errMsg);
-                    self->io.post([cb{std::move(cb)}]() {
+                    boost::asio::post(self->io, [cb{std::move(cb)}]() {
                         cb(std::make_error_code(std::errc::bad_message),
                            nullptr);
                     });
@@ -215,7 +214,7 @@ void NVMeMi::miPCIePortInformation(
                 }
             }
 
-            self->io.post([cb{std::move(cb)}, port{std::move(port)}]() mutable {
+            boost::asio::post(self->io, [cb{std::move(cb)}, port{std::move(port)}]() mutable {
                 cb({}, &port);
             });
         });
@@ -224,7 +223,7 @@ void NVMeMi::miPCIePortInformation(
     {
         lg2::error("[addr:{ADDR}, eid:{EID}]  {MSG}", "ADDR", addr, "EID",
                    static_cast<int>(eid), "MSG", e.what());
-        io.post([cb{std::move(cb)}]() {
+        boost::asio::post(io, [cb{std::move(cb)}]() {
             cb(std::make_error_code(std::errc::no_such_device), {});
         });
         return;
@@ -239,7 +238,7 @@ void NVMeMi::miSubsystemHealthStatusPoll(
     {
         lg2::error("[addr:{ADDR}, eid:{EID}] nvme endpoint is invalid ", "ADDR",
                    addr, "EID", static_cast<int>(eid));
-        io.post([cb{std::move(cb)}]() {
+        boost::asio::post(io, [cb{std::move(cb)}]() {
             cb(std::make_error_code(std::errc::no_such_device), nullptr);
         });
         return;
@@ -258,7 +257,7 @@ void NVMeMi::miSubsystemHealthStatusPoll(
                     "ADDR", self->addr, "EID", static_cast<int>(self->eid),
                     "ERR", std::strerror(errno));
 
-                self->io.post([cb{std::move(cb)}, last_errno{errno}]() {
+                boost::asio::post(self->io, [cb{std::move(cb)}, last_errno{errno}]() {
                     cb(std::make_error_code(static_cast<std::errc>(last_errno)),
                        nullptr);
                 });
@@ -273,14 +272,14 @@ void NVMeMi::miSubsystemHealthStatusPoll(
                     "[addr:{ADDR}, eid:{EID}] subsystem_health_status_poll:{MSG}",
                     "ADDR", self->addr, "EID", static_cast<int>(self->eid),
                     "MSG", errMsg);
-                self->io.post([cb{std::move(cb)}]() {
+                boost::asio::post(self->io, [cb{std::move(cb)}]() {
                     cb(std::make_error_code(std::errc::bad_message), nullptr);
                 });
                 return;
             }
 
-            self->io.post(
-                [cb{std::move(cb)}, ss_health{std::move(ss_health)}]() mutable {
+            boost::asio::post(
+                self->io, [cb{std::move(cb)}, ss_health{std::move(ss_health)}]() mutable {
                 cb({}, &ss_health);
             });
         });
@@ -289,7 +288,7 @@ void NVMeMi::miSubsystemHealthStatusPoll(
     {
         lg2::error("[addr:{ADDR}, eid:{EID}] {MSG}", "ADDR", addr, "EID",
                    static_cast<int>(eid), "MSG", e.what());
-        io.post([cb{std::move(cb)}]() {
+        boost::asio::post(io, [cb{std::move(cb)}]() {
             cb(std::make_error_code(std::errc::no_such_device), {});
         });
         return;
@@ -304,7 +303,7 @@ void NVMeMi::miScanCtrl(std::function<void(const std::error_code&,
     {
         lg2::error("nvme endpoint is invalid");
 
-        io.post([cb{std::move(cb)}]() {
+        boost::asio::post(io, [cb{std::move(cb)}]() {
             cb(std::make_error_code(std::errc::no_such_device), {});
         });
         return;
@@ -320,7 +319,7 @@ void NVMeMi::miScanCtrl(std::function<void(const std::error_code&,
                     "[addr:{ADDR}, eid:{EID}] fail to scan controllers:{ERR}",
                     "ADDR", self->addr, "EID", static_cast<int>(self->eid),
                     "ERR", std::strerror(errno));
-                self->io.post([cb{std::move(cb)}, last_errno{errno}]() {
+                boost::asio::post(self->io, [cb{std::move(cb)}, last_errno{errno}]() {
                     cb(std::make_error_code(static_cast<std::errc>(last_errno)),
                        {});
                 });
@@ -334,7 +333,7 @@ void NVMeMi::miScanCtrl(std::function<void(const std::error_code&,
                     "[addr:{ADDR}, eid:{EID}] fail to scan controllers: {MSG}",
                     "ADDR", self->addr, "EID", static_cast<int>(self->eid),
                     "MSG", errMsg);
-                self->io.post([cb{std::move(cb)}]() {
+                boost::asio::post(self->io, [cb{std::move(cb)}]() {
                     cb(std::make_error_code(std::errc::bad_message), {});
                 });
                 return;
@@ -346,15 +345,15 @@ void NVMeMi::miScanCtrl(std::function<void(const std::error_code&,
             {
                 list.push_back(c);
             }
-            self->io.post(
-                [cb{std::move(cb)}, list{std::move(list)}]() { cb({}, list); });
+            boost::asio::post(
+                self->io, [cb{std::move(cb)}, list{std::move(list)}]() { cb({}, list); });
         });
     }
     catch (const std::runtime_error& e)
     {
         lg2::error("[addr:{ADDR}, eid:{EID}] {MSG}", "ADDR", addr, "EID",
                    static_cast<int>(eid), "MSG", e.what());
-        io.post([cb{std::move(cb)}]() {
+        boost::asio::post(io, [cb{std::move(cb)}]() {
             cb(std::make_error_code(std::errc::no_such_device), {});
         });
         return;
@@ -369,7 +368,7 @@ void NVMeMi::adminIdentify(
     if (!nvmeEP)
     {
         lg2::error("nvme endpoint is invalid");
-        io.post([cb{std::move(cb)}]() {
+        boost::asio::post(io, [cb{std::move(cb)}]() {
             cb(std::make_error_code(std::errc::no_such_device), {});
         });
         return;
@@ -418,7 +417,7 @@ void NVMeMi::adminIdentifyFull(
                     "[addr:{ADDR}, eid:{EID}] fail to do nvme identify: {ERR}",
                     "ADDR", self->addr, "EID", static_cast<int>(self->eid),
                     "ERR", std::strerror(errno));
-                self->io.post([cb{std::move(cb)}, last_errno{errno}]() {
+                boost::asio::post(self->io, [cb{std::move(cb)}, last_errno{errno}]() {
                     cb(std::make_error_code(static_cast<std::errc>(last_errno)),
                        {});
                 });
@@ -432,13 +431,13 @@ void NVMeMi::adminIdentifyFull(
                     "[addr:{ADDR}, eid:{EID}] fail to do nvme identify: {MSG}",
                     "ADDR", self->addr, "EID", static_cast<int>(self->eid),
                     "MSG", errMsg);
-                self->io.post([cb{std::move(cb)}]() {
+                boost::asio::post(self->io, [cb{std::move(cb)}]() {
                     cb(std::make_error_code(std::errc::bad_message), {});
                 });
                 return;
             }
 
-            self->io.post([cb{std::move(cb)}, data{std::move(data)}]() mutable {
+            boost::asio::post(self->io, [cb{std::move(cb)}, data{std::move(data)}]() mutable {
                 std::span<uint8_t> span{data.data(), data.size()};
                 cb({}, span);
             });
@@ -448,7 +447,7 @@ void NVMeMi::adminIdentifyFull(
     {
         lg2::error("[addr:{ADDR}, eid:{EID}] {MSG}", "ADDR", addr, "EID",
                    static_cast<int>(eid), "MSG", e.what());
-        io.post([cb{std::move(cb)}]() {
+        boost::asio::post(io, [cb{std::move(cb)}]() {
             cb(std::make_error_code(std::errc::no_such_device), {});
         });
         return;
@@ -473,7 +472,7 @@ void NVMeMi::adminIdentifyPartial(
                     break;
 
                 default:
-                    data.resize(read_length);
+            data.resize(read_length);
             }
 
             nvme_identify_args args{};
@@ -496,7 +495,7 @@ void NVMeMi::adminIdentifyPartial(
                     "[addr:{ADDR}, eid:{EID}] fail to do nvme identify partial: {ERR}",
                     "ADDR", self->addr, "EID", static_cast<int>(self->eid),
                     "ERR", std::strerror(errno));
-                self->io.post([cb{std::move(cb)}, last_errno{errno}]() {
+                boost::asio::post(self->io, [cb{std::move(cb)}, last_errno{errno}]() {
                     cb(std::make_error_code(static_cast<std::errc>(last_errno)),
                        {});
                 });
@@ -510,13 +509,13 @@ void NVMeMi::adminIdentifyPartial(
                     "[addr:{ADDR}, eid:{EID}] fail to do nvme identify partial: {MSG}",
                     "ADDR", self->addr, "EID", static_cast<int>(self->eid),
                     "MSG", errMsg);
-                self->io.post([cb{std::move(cb)}]() {
+                boost::asio::post(self->io, [cb{std::move(cb)}]() {
                     cb(std::make_error_code(std::errc::bad_message), {});
                 });
                 return;
             }
 
-            self->io.post([cb{std::move(cb)}, data{std::move(data)}]() mutable {
+            boost::asio::post(self->io, [cb{std::move(cb)}, data{std::move(data)}]() mutable {
                 std::span<uint8_t> span{data.data(), data.size()};
                 cb({}, span);
             });
@@ -526,7 +525,7 @@ void NVMeMi::adminIdentifyPartial(
     {
         lg2::error("[addr:{ADDR}, eid:{EID}] {MSG}", "ADDR", addr, "EID",
                    static_cast<int>(eid), "MSG", e.what());
-        io.post([cb{std::move(cb)}]() {
+        boost::asio::post(io, [cb{std::move(cb)}]() {
             cb(std::make_error_code(std::errc::no_such_device), {});
         });
         return;
@@ -596,7 +595,7 @@ void NVMeMi::adminSanitize(
     if (!nvmeEP)
     {
         lg2::error("nvme endpoint is invalid");
-        io.post([cb{std::move(cb)}]() {
+        boost::asio::post(io, [cb{std::move(cb)}]() {
             cb(std::make_error_code(std::errc::no_such_device), {});
         });
         return;
@@ -624,7 +623,7 @@ void NVMeMi::adminSanitize(
                     "[addr:{ADDR}, eid:{EID}] fail to do nvme sanitize: {ERR}",
                     "ADDR", self->addr, "EID", static_cast<int>(self->eid),
                     "ERR", std::strerror(errno));
-                self->io.post([cb{std::move(cb)}, last_errno{errno}]() {
+                boost::asio::post(self->io, [cb{std::move(cb)}, last_errno{errno}]() {
                     cb(std::make_error_code(static_cast<std::errc>(last_errno)),
                        {});
                 });
@@ -638,13 +637,13 @@ void NVMeMi::adminSanitize(
                     "[addr:{ADDR}, eid:{EID}] fail to do nvme sanitize: {MSG} rc: {RC}",
                     "ADDR", self->addr, "EID", static_cast<int>(self->eid),
                     "MSG", errMsg, "RC", std::to_string(rc));
-                self->io.post([cb{std::move(cb)}]() {
+                boost::asio::post(self->io, [cb{std::move(cb)}]() {
                     cb(std::make_error_code(std::errc::bad_message), {});
                 });
                 return;
             }
 
-            self->io.post([cb{std::move(cb)}, data{std::move(data)}]() mutable {
+            boost::asio::post(self->io, [cb{std::move(cb)}, data{std::move(data)}]() mutable {
                 std::span<uint8_t> span{data.data(), data.size()};
                 cb({}, span);
             });
@@ -654,7 +653,7 @@ void NVMeMi::adminSanitize(
     {
         lg2::error("[addr:{ADDR}, eid:{EID}] {MSG}", "ADDR", addr, "EID",
                    static_cast<int>(eid), "MSG", e.what());
-        io.post([cb{std::move(cb)}]() {
+        boost::asio::post(io, [cb{std::move(cb)}]() {
             cb(std::make_error_code(std::errc::no_such_device), {});
         });
         return;
@@ -671,7 +670,7 @@ void NVMeMi::adminGetLogPage(
     {
         lg2::error("[addr:{ADDR}, eid:{EID}] nvme endpoint is invalid", "ADDR",
                    addr, "EID", static_cast<int>(eid));
-        io.post([cb{std::move(cb)}]() {
+        boost::asio::post(io, [cb{std::move(cb)}]() {
             cb(std::make_error_code(std::errc::no_such_device), {});
         });
         return;
@@ -881,7 +880,7 @@ void NVMeMi::adminGetLogPage(
                     "[addr:{ADDR}, eid:{EID}] fail to get log page {ERR}",
                     "ADDR", self->addr, "EID", static_cast<int>(self->eid),
                     "ERR", std::strerror(errno));
-                self->io.post([cb{std::move(cb)}, last_errno{errno}]() {
+                boost::asio::post(self->io, [cb{std::move(cb)}, last_errno{errno}]() {
                     cb(std::make_error_code(static_cast<std::errc>(last_errno)),
                        {});
                 });
@@ -896,13 +895,13 @@ void NVMeMi::adminGetLogPage(
                     "[addr:{ADDR}, eid:{EID}] fail to get log page: {MSG}",
                     "ADDR", self->addr, "EID", static_cast<int>(self->eid),
                     "MSG", errMsg);
-                self->io.post([cb{std::move(cb)}]() {
+                boost::asio::post(self->io, [cb{std::move(cb)}]() {
                     cb(std::make_error_code(std::errc::bad_message), {});
                     return;
                 });
             }
 
-            self->io.post([cb{std::move(cb)}, data{std::move(data)}]() mutable {
+            boost::asio::post(self->io, [cb{std::move(cb)}, data{std::move(data)}]() mutable {
                 std::span<uint8_t> span{data.data(), data.size()};
                 cb({}, span);
             });
@@ -913,7 +912,7 @@ void NVMeMi::adminGetLogPage(
         lg2::error(
             "[addr:{ADDR}, eid:{EID}] NVMeMi adminGetLogPage throws: {MSG}",
             "ADDR", addr, "EID", static_cast<int>(eid), "MSG", e.what());
-        io.post([cb{std::move(cb)}]() {
+        boost::asio::post(io, [cb{std::move(cb)}]() {
             cb(std::make_error_code(std::errc::no_such_device), {});
         });
         return;
@@ -930,7 +929,7 @@ void NVMeMi::adminXfer(
     {
         lg2::error("[addr:{ADDR}, eid:{EID}] nvme endpoint is invalid", "ADDR",
                    addr, "EID", static_cast<int>(eid));
-        io.post([cb{std::move(cb)}]() {
+        boost::asio::post(io, [cb{std::move(cb)}]() {
             cb(std::make_error_code(std::errc::no_such_device), {}, {});
         });
         return;
@@ -972,7 +971,7 @@ void NVMeMi::adminXfer(
                 lg2::error(
                     "[addr:{ADDR}, eid:{EID}] failed to nvme_mi_admin_xfer",
                     "ADDR", self->addr, "EID", static_cast<int>(self->eid));
-                self->io.post([cb{std::move(cb)}, last_errno{errno}]() {
+                boost::asio::post(self->io, [cb{std::move(cb)}, last_errno{errno}]() {
                     cb(std::make_error_code(static_cast<std::errc>(last_errno)),
                        {}, {});
                 });
@@ -984,7 +983,7 @@ void NVMeMi::adminXfer(
             // value (cdw0) is also client's job.
 
             buf.resize(sizeof(nvme_mi_admin_resp_hdr) + respDataSize);
-            self->io.post([cb{std::move(cb)}, data{std::move(buf)}]() mutable {
+            boost::asio::post(self->io, [cb{std::move(cb)}, data{std::move(buf)}]() mutable {
                 std::span<uint8_t> span(
                     data.begin() + sizeof(nvme_mi_admin_resp_hdr), data.end());
                 cb({}, *reinterpret_cast<nvme_mi_admin_resp_hdr*>(data.data()),
@@ -996,7 +995,7 @@ void NVMeMi::adminXfer(
     {
         lg2::error("[addr:{ADDR}, eid:{EID}] {MSG}", "ADDR", addr, "EID",
                    static_cast<int>(eid), "MSG", e.what());
-        io.post([cb{std::move(cb)}]() {
+        boost::asio::post(io, [cb{std::move(cb)}]() {
             cb(std::make_error_code(std::errc::no_such_device), {}, {});
         });
         return;
@@ -1011,7 +1010,7 @@ void NVMeMi::adminFwCommit(
     {
         lg2::error("[addr:{ADDR}, eid:{EID}] nvme endpoint is invalid", "ADDR",
                    addr, "EID", static_cast<int>(eid));
-        io.post([cb{std::move(cb)}]() {
+        boost::asio::post(io, [cb{std::move(cb)}]() {
             cb(std::make_error_code(std::errc::no_such_device),
                nvme_status_field::NVME_SC_MASK);
         });
@@ -1025,7 +1024,7 @@ void NVMeMi::adminFwCommit(
         args.action = action;
         args.slot = slot;
         args.bpid = bpid;
-        io.post([ctrl, args, cb{std::move(cb)},
+        boost::asio::post(io, [ctrl, args, cb{std::move(cb)},
                  self{shared_from_this()}]() mutable {
             int rc = nvme_mi_admin_fw_commit(ctrl, &args);
             if (rc < 0)
@@ -1034,7 +1033,7 @@ void NVMeMi::adminFwCommit(
                     "[addr:{ADDR}, eid:{EID}] fail to nvme_mi_admin_fw_commit: {ERR}",
                     "ADDR", self->addr, "EID", static_cast<int>(self->eid),
                     "ERR", std::strerror(errno));
-                self->io.post([cb{std::move(cb)}, last_errno{errno}]() {
+                boost::asio::post(self->io, [cb{std::move(cb)}, last_errno{errno}]() {
                     cb(std::make_error_code(static_cast<std::errc>(last_errno)),
                        nvme_status_field::NVME_SC_MASK);
                 });
@@ -1048,7 +1047,7 @@ void NVMeMi::adminFwCommit(
                     case NVME_SC_FW_NEEDS_CONV_RESET:
                     case NVME_SC_FW_NEEDS_SUBSYS_RESET:
                     case NVME_SC_FW_NEEDS_RESET:
-                        self->io.post([rc, cb{std::move(cb)}]() {
+                        boost::asio::post(self->io, [rc, cb{std::move(cb)}]() {
                             cb({}, static_cast<nvme_status_field>(rc));
                         });
                         break;
@@ -1057,7 +1056,7 @@ void NVMeMi::adminFwCommit(
                             static_cast<nvme_mi_resp_status>(rc));
                         lg2::error("fail to nvme_mi_admin_fw_commit: {MSG} ",
                                    "MSG", errMsg);
-                        self->io.post([rc, cb{std::move(cb)}]() {
+                        boost::asio::post(self->io, [rc, cb{std::move(cb)}]() {
                             cb(std::make_error_code(std::errc::bad_message),
                                static_cast<nvme_status_field>(rc));
                         });
@@ -1070,7 +1069,7 @@ void NVMeMi::adminFwCommit(
     {
         lg2::error("[addr:{ADDR}, eid:{EID}] {MSG}", "ADDR", addr, "EID",
                    static_cast<int>(eid), "MSG", e.what());
-        io.post([cb{std::move(cb)}]() {
+        boost::asio::post(io, [cb{std::move(cb)}]() {
             cb(std::make_error_code(std::errc::no_such_device),
                nvme_status_field::NVME_SC_MASK);
         });
@@ -1097,7 +1096,7 @@ void NVMeMi::adminSecuritySend(
         args.args_size = sizeof(struct nvme_security_send_args);
 
         int status = nvme_mi_admin_security_send(ctrl, &args);
-        self->io.post([cb{std::move(cb)}, nvme_errno{errno}, status]() {
+        boost::asio::post(self->io, [cb{std::move(cb)}, nvme_errno{errno}, status]() {
             auto err = std::make_error_code(static_cast<std::errc>(nvme_errno));
             cb(err, status);
         });
@@ -1108,7 +1107,7 @@ void NVMeMi::adminSecuritySend(
             "[addr:{ADDR}, eid:{EID}] adminSecuritySend post failed: {MSG}",
             "ADDR", addr, "EID", static_cast<int>(eid), "MSG",
             post_err.message());
-        io.post([cb{std::move(cb)}, post_err]() { cb(post_err, -1); });
+        boost::asio::post(io, [cb{std::move(cb)}, post_err]() { cb(post_err, -1); });
     }
 }
 
@@ -1146,15 +1145,15 @@ void NVMeMi::adminSecurityReceive(
                 "[addr:{ADDR}, eid:{EID}] nvme_mi_admin_security_send returned excess data, {LEN}",
                 "ADDR", self->addr, "EID", static_cast<int>(self->eid), "LEN",
                 args.data_len);
-            self->io.post([cb]() {
+            boost::asio::post(self->io, [cb]() {
                 cb(std::make_error_code(std::errc::protocol_error), -1, {});
             });
             return;
         }
 
         data.resize(args.data_len);
-        self->io.post(
-            [cb{std::move(cb)}, nvme_errno{errno}, status, data]() mutable {
+        boost::asio::post(
+            self->io, [cb{std::move(cb)}, nvme_errno{errno}, status, data]() mutable {
             std::span<uint8_t> span{data.data(), data.size()};
             auto err = std::make_error_code(static_cast<std::errc>(nvme_errno));
             cb(err, status, span);
@@ -1166,6 +1165,6 @@ void NVMeMi::adminSecurityReceive(
             "[addr:{ADDR}, eid:{EID}] adminSecuritySend post failed: {MSG}",
             "ADDR", addr, "EID", static_cast<int>(eid), "MSG",
             post_err.message());
-        io.post([cb{std::move(cb)}, post_err]() { cb(post_err, -1, {}); });
+        boost::asio::post(io, [cb{std::move(cb)}, post_err]() { cb(post_err, -1, {}); });
     }
 }
