@@ -210,7 +210,7 @@ void NVMeMi::miPCIePortInformation(
                         "ADDR", self->addr, "EID", static_cast<int>(self->eid),
                         "ERR", std::strerror(errno));
 
-                    self->io.post([cb{cb}, lastErrno{errno}]() {
+                    boost::asio::post(self->io, [cb{cb}, lastErrno{errno}]() {
                         cb(std::make_error_code(
                                static_cast<std::errc>(lastErrno)),
                            nullptr);
@@ -303,8 +303,8 @@ void NVMeMi::miSubsystemHealthStatusPoll(
             }
 
             boost::asio::post(
-                self->io, [cb{std::move(cb)}, ss_health{std::move(ss_health)}]() mutable {
-                cb({}, &ss_health);
+                self->io, [cb{std::move(cb)}, ssHealth{std::move(ssHealth)}]() mutable {
+                cb({}, &ssHealth);
             });
         });
     }
@@ -500,7 +500,7 @@ void NVMeMi::adminIdentifyPartial(
                     break;
 
                 default:
-            data.resize(read_length);
+            data.resize(readLength);
             }
 
             nvme_identify_args args{};
@@ -1149,8 +1149,8 @@ void NVMeMi::adminSecuritySend(
         lg2::error(
             "[addr:{ADDR}, eid:{EID}] adminSecuritySend post failed: {MSG}",
             "ADDR", addr, "EID", static_cast<int>(eid), "MSG",
-            post_err.message());
-        boost::asio::post(io, [cb{std::move(cb)}, post_err]() { cb(post_err, -1); });
+            postErr.message());
+        boost::asio::post(io, [cb{std::move(cb)}, postErr]() { cb(postErr, -1); });
     }
 }
 
@@ -1199,7 +1199,7 @@ void NVMeMi::adminSecurityReceive(
         boost::asio::post(
             self->io, [cb{std::move(cb)}, nvme_errno{errno}, status, data]() mutable {
             std::span<uint8_t> span{data.data(), data.size()};
-            auto err = std::make_error_code(static_cast<std::errc>(nvmeErrno));
+            auto err = std::make_error_code(static_cast<std::errc>(nvme_errno));
             cb(err, status, span);
         });
     });
@@ -1208,7 +1208,7 @@ void NVMeMi::adminSecurityReceive(
         lg2::error(
             "[addr:{ADDR}, eid:{EID}] adminSecuritySend post failed: {MSG}",
             "ADDR", addr, "EID", static_cast<int>(eid), "MSG",
-            post_err.message());
-        boost::asio::post(io, [cb{std::move(cb)}, post_err]() { cb(post_err, -1, {}); });
+            postErr.message());
+        boost::asio::post(io, [cb{std::move(cb)}, postErr]() { cb(postErr, -1, {}); });
     }
 }
