@@ -9,26 +9,35 @@
 #include <cerrno>
 #include <iostream>
 
-std::map<int, std::weak_ptr<NVMeMi::Worker>> NVMeMi::workerMap{};
-
-// libnvme-mi root service
-nvme_root_t NVMeMi::nvmeRoot = nvme_mi_create_root(stderr, DEFAULT_LOGLEVEL);
-
 constexpr size_t maxNVMeMILength = 4096;
 
+std::map<int, std::weak_ptr<NVMeMi::Worker>>& NVMeMi::getWorkerMap()
+{
+    static std::map<int, std::weak_ptr<NVMeMi::Worker>> workerMap{};
+    return workerMap;
+}
+
+nvme_root_t& NVMeMi::getNVMeRoot()
+{
+    // libnvme-mi root service
+    static nvme_root_t nvmeRoot = nvme_mi_create_root(stderr, DEFAULT_LOGLEVEL);
+    ;
+    return nvmeRoot;
+}
+
 NVMeMi::NVMeMi(boost::asio::io_context& io,
-               std::shared_ptr<sdbusplus::asio::connection> conn,
+               const std::shared_ptr<sdbusplus::asio::connection>& conn,
                std::vector<uint8_t> sockName, uint8_t eid) :
     io(io),
-    conn(conn), dbus(*conn.get()), eid(eid)
+    conn(conn), dbus(*conn), eid(eid)
 {
     // reset to unassigned nid/eid and endpoint
-    nid = -1;
+
     mctpPath.erase();
-    nvmeEP = nullptr;
 
     // set update the worker thread
-    if (!nvmeRoot)
+    auto& nvmeRoot = getNVMeRoot();
+    if (nvmeRoot == nullptr)
     {
         throw std::runtime_error("invalid NVMe root");
     }
@@ -36,6 +45,7 @@ NVMeMi::NVMeMi(boost::asio::io_context& io,
     addr.assign(sockName.begin() + 1, sockName.end());
 
     // only create one share worker for all drives
+    auto& workerMap = getWorkerMap();
     auto res = workerMap.find(0);
     if (res == workerMap.end() || res->second.expired())
     {
@@ -47,7 +57,8 @@ NVMeMi::NVMeMi(boost::asio::io_context& io,
         worker = res->second.lock();
     }
 
-    nvmeEP = nvme_mi_open_libmctp(nvmeRoot, 0, (char*)sockName.data(), eid);
+    std::string sockNameStr(sockName.begin(), sockName.end());
+    nvmeEP = nvme_mi_open_libmctp(nvmeRoot, 0, sockNameStr.data(), eid);
     if (nvmeEP == nullptr)
     {
         nid = -1;
@@ -63,13 +74,13 @@ NVMeMi::NVMeMi(boost::asio::io_context& io,
 
 NVMeMi::Worker::Worker()
 { // start worker thread
-    workerStop = false;
+
     thread = std::thread([&io = workerIO, &stop = workerStop, &mtx = workerMtx,
                           &cv = workerCv]() {
         // With BOOST_ASIO_DISABLE_THREADS, boost::asio::executor_work_guard
         // issues null_event across the thread, which caused invalid invokation.
         // We implement a simple invoke machenism based std::condition_variable.
-        while (1)
+        while (true)
         {
             io.run();
             io.restart();
@@ -97,10 +108,7 @@ NVMeMi::Worker::~Worker()
     }
     thread.join();
 }
-NVMeMi::~NVMeMi()
-{
-    // closeMCTP();
-}
+NVMeMi::~NVMeMi() = default;
 
 void NVMeMi::Worker::post(std::function<void(void)>&& func)
 {
@@ -119,15 +127,14 @@ void NVMeMi::Worker::post(std::function<void(void)>&& func)
 
 void NVMeMi::post(std::function<void(void)>&& func)
 {
-    worker->post(
-        [self{std::move(shared_from_this())}, func{std::move(func)}]() {
+    worker->post([self{shared_from_this()}, func{std::move(func)}]() {
         std::unique_lock<std::mutex> lock(self->mctpMtx);
         func();
     });
 }
 
 // Calls .post(), catching runtime_error and returning an error code on failure.
-std::error_code NVMeMi::try_post(std::function<void(void)>&& func)
+std::error_code NVMeMi::tryPost(std::function<void(void)>&& func)
 {
     try
     {
@@ -139,13 +146,13 @@ std::error_code NVMeMi::try_post(std::function<void(void)>&& func)
                    static_cast<int>(eid), "MSG", e.what());
         return std::make_error_code(std::errc::no_such_device);
     }
-    return std::error_code();
+    return {};
 }
 
 void NVMeMi::miPCIePortInformation(
     std::function<void(const std::error_code&, nvme_mi_read_port_info*)>&& cb)
 {
-    if (!nvmeEP)
+    if (nvmeEP == nullptr)
     {
         lg2::error("[addr:{ADDR}, eid:{EID}] vme endpoint is invalid", "ADDR",
                    addr, "EID", static_cast<int>(eid));
@@ -159,8 +166,8 @@ void NVMeMi::miPCIePortInformation(
     try
     {
         post([self{shared_from_this()}, cb{std::move(cb)}]() {
-            nvme_mi_read_nvm_ss_info ss_info;
-            auto rc = nvme_mi_mi_read_mi_data_subsys(self->nvmeEP, &ss_info);
+            nvme_mi_read_nvm_ss_info ssInfo{};
+            auto rc = nvme_mi_mi_read_mi_data_subsys(self->nvmeEP, &ssInfo);
             if (rc < 0)
             {
                 lg2::error(
@@ -174,7 +181,7 @@ void NVMeMi::miPCIePortInformation(
                 });
                 return;
             }
-            else if (rc > 0)
+            if (rc > 0)
             {
                 std::string_view errMsg =
                     statusToString(static_cast<nvme_mi_resp_status>(rc));
@@ -188,17 +195,34 @@ void NVMeMi::miPCIePortInformation(
                 });
                 return;
             }
-            struct nvme_mi_read_port_info port;
+            // add the delay to ensure the drive can process the command
+            std::this_thread::sleep_for(std::chrono::milliseconds(300));
+            struct nvme_mi_read_port_info port
+            {};
             memset(&port, 0, sizeof(port));
-            for (auto i = 0; i <= ss_info.nump; i++)
+            for (auto i = 0; i <= ssInfo.nump; i++)
             {
                 auto rc = nvme_mi_mi_read_mi_data_port(self->nvmeEP, i, &port);
-                if (rc != 0)
+                if (rc < 0)
+                {
+                    lg2::error(
+                        "[addr:{ADDR}, eid:{EID}] nvme_mi_mi_read_mi_data_port: {ERR}",
+                        "ADDR", self->addr, "EID", static_cast<int>(self->eid),
+                        "ERR", std::strerror(errno));
+
+                    self->io.post([cb{cb}, lastErrno{errno}]() {
+                        cb(std::make_error_code(
+                               static_cast<std::errc>(lastErrno)),
+                           nullptr);
+                    });
+                    return;
+                }
+                if (rc > 0)
                 {
                     std::string_view errMsg =
                         statusToString(static_cast<nvme_mi_resp_status>(rc));
                     lg2::error(
-                        "[addr:{ADDR}, eid:{EID}] mi_read_mi_data_subsys: {ERR}",
+                        "[addr:{ADDR}, eid:{EID}] nvme_mi_mi_read_mi_data_port: {ERR}",
                         "ADDR", self->addr, "EID", static_cast<int>(self->eid),
                         "ERR", errMsg);
                     boost::asio::post(self->io, [cb{std::move(cb)}]() {
@@ -234,7 +258,7 @@ void NVMeMi::miSubsystemHealthStatusPoll(
     std::function<void(const std::error_code&, nvme_mi_nvm_ss_health_status*)>&&
         cb)
 {
-    if (!nvmeEP)
+    if (nvmeEP == nullptr)
     {
         lg2::error("[addr:{ADDR}, eid:{EID}] nvme endpoint is invalid ", "ADDR",
                    addr, "EID", static_cast<int>(eid));
@@ -247,9 +271,9 @@ void NVMeMi::miSubsystemHealthStatusPoll(
     try
     {
         post([self{shared_from_this()}, cb{std::move(cb)}]() {
-            nvme_mi_nvm_ss_health_status ss_health;
+            nvme_mi_nvm_ss_health_status ssHealth{};
             auto rc = nvme_mi_mi_subsystem_health_status_poll(self->nvmeEP,
-                                                              true, &ss_health);
+                                                              true, &ssHealth);
             if (rc < 0)
             {
                 lg2::error(
@@ -263,7 +287,7 @@ void NVMeMi::miSubsystemHealthStatusPoll(
                 });
                 return;
             }
-            else if (rc > 0)
+            if (rc > 0)
             {
                 std::string_view errMsg =
                     statusToString(static_cast<nvme_mi_resp_status>(rc));
@@ -299,7 +323,7 @@ void NVMeMi::miScanCtrl(std::function<void(const std::error_code&,
                                            const std::vector<nvme_mi_ctrl_t>&)>
                             cb)
 {
-    if (!nvmeEP)
+    if (nvmeEP == nullptr)
     {
         lg2::error("nvme endpoint is invalid");
 
@@ -325,7 +349,7 @@ void NVMeMi::miScanCtrl(std::function<void(const std::error_code&,
                 });
                 return;
             }
-            else if (rc > 0)
+            if (rc > 0)
             {
                 std::string_view errMsg =
                     statusToString(static_cast<nvme_mi_resp_status>(rc));
@@ -340,7 +364,7 @@ void NVMeMi::miScanCtrl(std::function<void(const std::error_code&,
             }
 
             std::vector<nvme_mi_ctrl_t> list;
-            nvme_mi_ctrl_t c;
+            nvme_mi_ctrl_t c = nullptr;
             nvme_mi_for_each_ctrl(self->nvmeEP, c)
             {
                 list.push_back(c);
@@ -362,10 +386,10 @@ void NVMeMi::miScanCtrl(std::function<void(const std::error_code&,
 
 void NVMeMi::adminIdentify(
     nvme_mi_ctrl_t ctrl, nvme_identify_cns cns, uint32_t nsid, uint16_t cntid,
-    uint16_t read_length,
+    uint16_t readLength,
     std::function<void(const std::error_code&, std::span<uint8_t>)>&& cb)
 {
-    if (!nvmeEP)
+    if (nvmeEP == nullptr)
     {
         lg2::error("nvme endpoint is invalid");
         boost::asio::post(io, [cb{std::move(cb)}]() {
@@ -376,13 +400,17 @@ void NVMeMi::adminIdentify(
 
     lg2::debug("[eid:{EID}] identify cmd resp length: {RSPLEN}", "EID",
                static_cast<int>(eid), "RSPLEN",
-               static_cast<unsigned int>(read_length));
+               static_cast<unsigned int>(readLength));
 
-    if ((read_length > 0) && (read_length < NVME_IDENTIFY_DATA_SIZE))
-        NVMeMi::adminIdentifyPartial(ctrl, cns, nsid, cntid, read_length,
+    if ((readLength > 0) && (readLength < NVME_IDENTIFY_DATA_SIZE))
+    {
+        NVMeMi::adminIdentifyPartial(ctrl, cns, nsid, cntid, readLength,
                                      std::move(cb));
+    }
     else
+    {
         NVMeMi::adminIdentifyFull(ctrl, cns, nsid, cntid, std::move(cb));
+    }
 }
 
 void NVMeMi::adminIdentifyFull(
@@ -423,7 +451,7 @@ void NVMeMi::adminIdentifyFull(
                 });
                 return;
             }
-            else if (rc > 0)
+            if (rc > 0)
             {
                 std::string_view errMsg =
                     statusToString(static_cast<nvme_mi_resp_status>(rc));
@@ -456,12 +484,12 @@ void NVMeMi::adminIdentifyFull(
 
 void NVMeMi::adminIdentifyPartial(
     nvme_mi_ctrl_t ctrl, nvme_identify_cns cns, uint32_t nsid, uint16_t cntid,
-    uint16_t read_length,
+    uint16_t readLength,
     std::function<void(const std::error_code&, std::span<uint8_t>)>&& cb)
 {
     try
     {
-        post([ctrl, cns, nsid, cntid, read_length, self{shared_from_this()},
+        post([ctrl, cns, nsid, cntid, readLength, self{shared_from_this()},
               cb{std::move(cb)}]() {
             int rc = 0;
             std::vector<uint8_t> data;
@@ -501,7 +529,7 @@ void NVMeMi::adminIdentifyPartial(
                 });
                 return;
             }
-            else if (rc > 0)
+            if (rc > 0)
             {
                 std::string_view errMsg =
                     statusToString(static_cast<nvme_mi_resp_status>(rc));
@@ -532,9 +560,8 @@ void NVMeMi::adminIdentifyPartial(
     }
 }
 
-static int nvme_mi_admin_get_log_telemetry_host_rae(nvme_mi_ctrl_t ctrl,
-                                                    bool /*rae*/, __u64 offset,
-                                                    __u32 len, void* log)
+static int nvmeMiAdminGetLogTelemetryHostRae(nvme_mi_ctrl_t ctrl, bool /*rae*/,
+                                             __u64 offset, __u32 len, void* log)
 {
     return nvme_mi_admin_get_log_telemetry_host(ctrl, offset, len, log);
 }
@@ -546,16 +573,16 @@ int getTelemetryLog(nvme_mi_ctrl_t ctrl, bool host, bool create,
 {
     int rc = 0;
     data.resize(sizeof(nvme_telemetry_log));
-    nvme_telemetry_log& log =
-        *reinterpret_cast<nvme_telemetry_log*>(data.data());
-    auto func = host ? nvme_mi_admin_get_log_telemetry_host_rae
+    auto& log =
+        *static_cast<nvme_telemetry_log*>(static_cast<void*>(data.data()));
+    auto func = host ? nvmeMiAdminGetLogTelemetryHostRae
                      : nvme_mi_admin_get_log_telemetry_ctrl;
 
     // Only host telemetry log requires create.
     if (host && create)
     {
         rc = nvme_mi_admin_get_log_create_telemetry_host(ctrl, &log);
-        if (rc)
+        if (rc != 0)
         {
             lg2::error("failed to create telemetry host log");
             return rc;
@@ -565,9 +592,9 @@ int getTelemetryLog(nvme_mi_ctrl_t ctrl, bool host, bool create,
 
     rc = func(ctrl, false, 0, sizeof(log), &log);
 
-    if (rc)
+    if (rc != 0)
     {
-        auto str = (host ? "host" : "ctrl");
+        const auto* str = (host ? "host" : "ctrl");
         lg2::error("failed to retain telemetry log for {MSG}", "MSG", str);
         return rc;
     }
@@ -578,9 +605,9 @@ int getTelemetryLog(nvme_mi_ctrl_t ctrl, bool host, bool create,
 
     data.resize(size);
     rc = func(ctrl, false, 0, data.size(), data.data());
-    if (rc)
+    if (rc != 0)
     {
-        auto str = (host ? "host" : "ctrl");
+        const auto* str = (host ? "host" : "ctrl");
         lg2::error("failed to get full telemetry log for {MSG}", "MSG", str);
         return rc;
     }
@@ -592,7 +619,7 @@ void NVMeMi::adminSanitize(
     uint32_t owpattern,
     std::function<void(const std::error_code&, std::span<uint8_t>)>&& cb)
 {
-    if (!nvmeEP)
+    if (nvmeEP == nullptr)
     {
         lg2::error("nvme endpoint is invalid");
         boost::asio::post(io, [cb{std::move(cb)}]() {
@@ -606,15 +633,17 @@ void NVMeMi::adminSanitize(
               cb{std::move(cb)}]() {
             int rc = 0;
             std::vector<uint8_t> data(8);
-            struct nvme_sanitize_nvm_args args;
+            struct nvme_sanitize_nvm_args args
+            {};
             memset(&args, 0, sizeof(args));
 
             args.args_size = sizeof(args);
             args.sanact = sanact;
             args.owpass = owpass;
-            args.nodas = 0x1;
+            args.nodas = true;
             args.ovrpat = owpattern;
-            args.result = (uint32_t*)data.data();
+            args.result =
+                static_cast<uint32_t*>(static_cast<void*>(data.data()));
 
             rc = nvme_mi_admin_sanitize_nvm(ctrl, &args);
             if (rc < 0)
@@ -629,7 +658,7 @@ void NVMeMi::adminSanitize(
                 });
                 return;
             }
-            else if (rc > 0)
+            if (rc > 0)
             {
                 std::string_view errMsg =
                     statusToString(static_cast<nvme_mi_resp_status>(rc));
@@ -658,15 +687,13 @@ void NVMeMi::adminSanitize(
         });
         return;
     }
-    return;
 }
 
 void NVMeMi::adminGetLogPage(
     nvme_mi_ctrl_t ctrl, nvme_cmd_get_log_lid lid, uint32_t nsid, uint8_t lsp,
-    uint16_t lsi,
     std::function<void(const std::error_code&, std::span<uint8_t>)>&& cb)
 {
-    if (!nvmeEP)
+    if (nvmeEP == nullptr)
     {
         lg2::error("[addr:{ADDR}, eid:{EID}] nvme endpoint is invalid", "ADDR",
                    addr, "EID", static_cast<int>(eid));
@@ -678,7 +705,7 @@ void NVMeMi::adminGetLogPage(
 
     try
     {
-        post([ctrl, nsid, lid, lsp, lsi, self{shared_from_this()},
+        post([ctrl, nsid, lid, lsp, self{shared_from_this()},
               cb{std::move(cb)}]() {
             std::vector<uint8_t> data;
 
@@ -687,17 +714,21 @@ void NVMeMi::adminGetLogPage(
             {
                 case NVME_LOG_LID_ERROR:
                 {
+                    // NOLINTNEXTLINE(readability-identifier-naming)
                     data.resize(nvme_mi_xfer_size);
                     // The number of entries for most recent error logs.
                     // Currently we only do one nvme mi transfer for the
                     // error log to avoid blocking other tasks
+                    // NOLINTBEGIN(readability-identifier-naming)
                     static constexpr int num = nvme_mi_xfer_size /
                                                sizeof(nvme_error_log_page);
+                    // NOLINTEND(readability-identifier-naming)
                     nvme_error_log_page* log =
-                        reinterpret_cast<nvme_error_log_page*>(data.data());
+                        static_cast<nvme_error_log_page*>(
+                            static_cast<void*>(data.data()));
 
                     rc = nvme_mi_admin_get_log_error(ctrl, num, false, log);
-                    if (rc)
+                    if (rc != 0)
                     {
                         lg2::error(
                             "[addr:{ADDR}, eid:{EID}] fail to get error log",
@@ -710,10 +741,14 @@ void NVMeMi::adminGetLogPage(
                 case NVME_LOG_LID_SMART:
                 {
                     data.resize(sizeof(nvme_smart_log));
-                    nvme_smart_log* log =
-                        reinterpret_cast<nvme_smart_log*>(data.data());
-                    rc = nvme_mi_admin_get_log_smart(ctrl, nsid, false, log);
-                    if (rc)
+                    nvme_smart_log* log = static_cast<nvme_smart_log*>(
+                        static_cast<void*>(data.data()));
+
+                    constexpr int readLen = sizeof(nvme_smart_log) -
+                                            sizeof(log->rsvd232);
+                    rc = nvme_mi_admin_get_nsid_log(ctrl, true, lid, nsid,
+                                                    readLen, log);
+                    if (rc != 0)
                     {
                         lg2::error(
                             "[addr:{ADDR}, eid:{EID}] fail to get smart log",
@@ -726,10 +761,10 @@ void NVMeMi::adminGetLogPage(
                 case NVME_LOG_LID_FW_SLOT:
                 {
                     data.resize(sizeof(nvme_firmware_slot));
-                    nvme_firmware_slot* log =
-                        reinterpret_cast<nvme_firmware_slot*>(data.data());
+                    nvme_firmware_slot* log = static_cast<nvme_firmware_slot*>(
+                        static_cast<void*>(data.data()));
                     rc = nvme_mi_admin_get_log_fw_slot(ctrl, false, log);
-                    if (rc)
+                    if (rc != 0)
                     {
                         lg2::error(
                             "[addr:{ADDR}, eid:{EID}] fail to get firmware slot",
@@ -743,13 +778,14 @@ void NVMeMi::adminGetLogPage(
                 {
                     data.resize(sizeof(nvme_cmd_effects_log));
                     nvme_cmd_effects_log* log =
-                        reinterpret_cast<nvme_cmd_effects_log*>(data.data());
+                        static_cast<nvme_cmd_effects_log*>(
+                            static_cast<void*>(data.data()));
 
                     // nvme rev 1.3 doesn't support csi,
                     // set to default csi = NVME_CSI_NVM
                     rc = nvme_mi_admin_get_log_cmd_effects(ctrl, NVME_CSI_NVM,
                                                            log);
-                    if (rc)
+                    if (rc != 0)
                     {
                         lg2::error(
                             "[addr:{ADDR}, eid:{EID}] fail to get cmd supported and effects log",
@@ -762,10 +798,10 @@ void NVMeMi::adminGetLogPage(
                 case NVME_LOG_LID_DEVICE_SELF_TEST:
                 {
                     data.resize(sizeof(nvme_self_test_log));
-                    nvme_self_test_log* log =
-                        reinterpret_cast<nvme_self_test_log*>(data.data());
+                    nvme_self_test_log* log = static_cast<nvme_self_test_log*>(
+                        static_cast<void*>(data.data()));
                     rc = nvme_mi_admin_get_log_device_self_test(ctrl, log);
-                    if (rc)
+                    if (rc != 0)
                     {
                         lg2::error(
                             "[addr:{ADDR}, eid:{EID}] fail to get device self test log",
@@ -778,11 +814,11 @@ void NVMeMi::adminGetLogPage(
                 case NVME_LOG_LID_CHANGED_NS:
                 {
                     data.resize(sizeof(nvme_ns_list));
-                    nvme_ns_list* log =
-                        reinterpret_cast<nvme_ns_list*>(data.data());
+                    auto* log = static_cast<nvme_ns_list*>(
+                        static_cast<void*>(data.data()));
                     rc = nvme_mi_admin_get_log_changed_ns_list(ctrl, false,
                                                                log);
-                    if (rc)
+                    if (rc != 0)
                     {
                         lg2::error(
                             "[addr:{ADDR}, eid:{EID}] fail to get changed namespace list",
@@ -832,12 +868,12 @@ void NVMeMi::adminGetLogPage(
                 {
                     data.resize(sizeof(nvme_resv_notification_log));
                     nvme_resv_notification_log* log =
-                        reinterpret_cast<nvme_resv_notification_log*>(
-                            data.data());
+                        static_cast<nvme_resv_notification_log*>(
+                            static_cast<void*>(data.data()));
 
                     int rc = nvme_mi_admin_get_log_reservation(ctrl, false,
                                                                log);
-                    if (rc)
+                    if (rc != 0)
                     {
                         lg2::error(
                             "[addr:{ADDR}, eid:{EID}] fail to get reservation notification log",
@@ -851,10 +887,11 @@ void NVMeMi::adminGetLogPage(
                 {
                     data.resize(sizeof(nvme_sanitize_log_page));
                     nvme_sanitize_log_page* log =
-                        reinterpret_cast<nvme_sanitize_log_page*>(data.data());
+                        static_cast<nvme_sanitize_log_page*>(
+                            static_cast<void*>(data.data()));
 
                     int rc = nvme_mi_admin_get_log_sanitize(ctrl, false, log);
-                    if (rc)
+                    if (rc != 0)
                     {
                         lg2::error(
                             "[addr:{ADDR}, eid:{EID}] fail to get sanitize status log",
@@ -886,7 +923,7 @@ void NVMeMi::adminGetLogPage(
                 });
                 return;
             }
-            else if (rc > 0)
+            if (rc > 0)
             {
                 std::string_view errMsg =
                     statusToString(static_cast<nvme_mi_resp_status>(rc));
@@ -920,12 +957,12 @@ void NVMeMi::adminGetLogPage(
 }
 
 void NVMeMi::adminXfer(
-    nvme_mi_ctrl_t ctrl, const nvme_mi_admin_req_hdr& admin_req,
-    std::span<uint8_t> data, unsigned int timeout_ms,
+    nvme_mi_ctrl_t ctrl, const nvme_mi_admin_req_hdr& adminReq,
+    std::span<uint8_t> data, unsigned int timeoutMs,
     std::function<void(const std::error_code&, const nvme_mi_admin_resp_hdr&,
                        std::span<uint8_t>)>&& cb)
 {
-    if (!nvmeEP)
+    if (nvmeEP == nullptr)
     {
         lg2::error("[addr:{ADDR}, eid:{EID}] nvme endpoint is invalid", "ADDR",
                    addr, "EID", static_cast<int>(eid));
@@ -937,15 +974,18 @@ void NVMeMi::adminXfer(
     try
     {
         std::vector<uint8_t> req(sizeof(nvme_mi_admin_req_hdr) + data.size());
-        memcpy(req.data(), &admin_req, sizeof(nvme_mi_admin_req_hdr));
-        memcpy(req.data() + sizeof(nvme_mi_admin_req_hdr), data.data(),
-               data.size());
-        post([ctrl, req{std::move(req)}, self{shared_from_this()}, timeout_ms,
+
+        std::memcpy(req.data(), &adminReq, sizeof(nvme_mi_admin_req_hdr));
+
+        std::copy(data.begin(), data.end(),
+                  req.begin() + sizeof(nvme_mi_admin_req_hdr));
+        post([ctrl, req{std::move(req)}, self{shared_from_this()}, timeoutMs,
               cb{std::move(cb)}]() mutable {
             int rc = 0;
 
             nvme_mi_admin_req_hdr* reqHeader =
-                reinterpret_cast<nvme_mi_admin_req_hdr*>(req.data());
+                static_cast<nvme_mi_admin_req_hdr*>(
+                    static_cast<void*>(req.data()));
 
             size_t respDataSize =
                 boost::endian::little_to_native<size_t>(reqHeader->dlen);
@@ -954,11 +994,12 @@ void NVMeMi::adminXfer(
             size_t bufSize = sizeof(nvme_mi_admin_resp_hdr) + respDataSize;
             std::vector<uint8_t> buf(bufSize);
             nvme_mi_admin_resp_hdr* respHeader =
-                reinterpret_cast<nvme_mi_admin_resp_hdr*>(buf.data());
+                static_cast<nvme_mi_admin_resp_hdr*>(
+                    static_cast<void*>(buf.data()));
 
             // set timeout
             unsigned timeout = nvme_mi_ep_get_timeout(self->nvmeEP);
-            nvme_mi_ep_set_timeout(self->nvmeEP, timeout_ms);
+            nvme_mi_ep_set_timeout(self->nvmeEP, timeoutMs);
 
             rc = nvme_mi_admin_xfer(ctrl, reqHeader,
                                     req.size() - sizeof(nvme_mi_admin_req_hdr),
@@ -986,7 +1027,9 @@ void NVMeMi::adminXfer(
             boost::asio::post(self->io, [cb{std::move(cb)}, data{std::move(buf)}]() mutable {
                 std::span<uint8_t> span(
                     data.begin() + sizeof(nvme_mi_admin_resp_hdr), data.end());
-                cb({}, *reinterpret_cast<nvme_mi_admin_resp_hdr*>(data.data()),
+                cb({},
+                   *static_cast<nvme_mi_admin_resp_hdr*>(
+                       static_cast<void*>(data.data())),
                    span);
             });
         });
@@ -1006,7 +1049,7 @@ void NVMeMi::adminFwCommit(
     nvme_mi_ctrl_t ctrl, nvme_fw_commit_ca action, uint8_t slot, bool bpid,
     std::function<void(const std::error_code&, nvme_status_field)>&& cb)
 {
-    if (!nvmeEP)
+    if (nvmeEP == nullptr)
     {
         lg2::error("[addr:{ADDR}, eid:{EID}] nvme endpoint is invalid", "ADDR",
                    addr, "EID", static_cast<int>(eid));
@@ -1018,7 +1061,7 @@ void NVMeMi::adminFwCommit(
     }
     try
     {
-        nvme_fw_commit_args args;
+        nvme_fw_commit_args args{};
         memset(&args, 0, sizeof(args));
         args.args_size = sizeof(args);
         args.action = action;
@@ -1039,7 +1082,7 @@ void NVMeMi::adminFwCommit(
                 });
                 return;
             }
-            else if (rc >= 0)
+            if (rc >= 0)
             {
                 switch (rc & 0x7ff)
                 {
@@ -1078,18 +1121,18 @@ void NVMeMi::adminFwCommit(
 }
 
 void NVMeMi::adminSecuritySend(
-    nvme_mi_ctrl_t ctrl, uint8_t proto, uint16_t proto_specific,
+    nvme_mi_ctrl_t ctrl, uint8_t proto, uint16_t protoSpecific,
     std::span<uint8_t> data,
-    std::function<void(const std::error_code&, int nvme_status)>&& cb)
+    std::function<void(const std::error_code&, int nvmeStatus)>&& cb)
 {
-    std::error_code post_err =
-        try_post([self{shared_from_this()}, ctrl, proto, proto_specific, data,
-                  cb{std::move(cb)}]() {
-        struct nvme_security_send_args args;
+    std::error_code postErr = tryPost(
+        [self{shared_from_this()}, ctrl, proto, protoSpecific, data, cb{cb}]() {
+        struct nvme_security_send_args args
+        {};
         memset(&args, 0x0, sizeof(args));
         args.secp = proto;
-        args.spsp0 = proto_specific & 0xff;
-        args.spsp1 = proto_specific >> 8;
+        args.spsp0 = protoSpecific & 0xff;
+        args.spsp1 = protoSpecific >> 8;
         args.nssf = 0;
         args.data = data.data();
         args.data_len = data.size_bytes();
@@ -1101,7 +1144,7 @@ void NVMeMi::adminSecuritySend(
             cb(err, status);
         });
     });
-    if (post_err)
+    if (postErr)
     {
         lg2::error(
             "[addr:{ADDR}, eid:{EID}] adminSecuritySend post failed: {MSG}",
@@ -1112,27 +1155,28 @@ void NVMeMi::adminSecuritySend(
 }
 
 void NVMeMi::adminSecurityReceive(
-    nvme_mi_ctrl_t ctrl, uint8_t proto, uint16_t proto_specific,
-    uint32_t transfer_length,
-    std::function<void(const std::error_code&, int nvme_status,
+    nvme_mi_ctrl_t ctrl, uint8_t proto, uint16_t protoSpecific,
+    uint32_t transferLength,
+    std::function<void(const std::error_code&, int nvmeStatus,
                        std::span<uint8_t> data)>&& cb)
 {
-    if (transfer_length > maxNVMeMILength)
+    if (transferLength > maxNVMeMILength)
     {
         cb(std::make_error_code(std::errc::invalid_argument), -1, {});
         return;
     }
 
-    std::error_code post_err =
-        try_post([self{shared_from_this()}, ctrl, proto, proto_specific,
-                  transfer_length, cb{std::move(cb)}]() {
-        std::vector<uint8_t> data(transfer_length);
+    std::error_code postErr =
+        tryPost([self{shared_from_this()}, ctrl, proto, protoSpecific,
+                 transferLength, cb{cb}]() {
+        std::vector<uint8_t> data(transferLength);
 
-        struct nvme_security_receive_args args;
+        struct nvme_security_receive_args args
+        {};
         memset(&args, 0x0, sizeof(args));
         args.secp = proto;
-        args.spsp0 = proto_specific & 0xff;
-        args.spsp1 = proto_specific >> 8;
+        args.spsp0 = protoSpecific & 0xff;
+        args.spsp1 = protoSpecific >> 8;
         args.nssf = 0;
         args.data = data.data();
         args.data_len = data.size();
@@ -1155,11 +1199,11 @@ void NVMeMi::adminSecurityReceive(
         boost::asio::post(
             self->io, [cb{std::move(cb)}, nvme_errno{errno}, status, data]() mutable {
             std::span<uint8_t> span{data.data(), data.size()};
-            auto err = std::make_error_code(static_cast<std::errc>(nvme_errno));
+            auto err = std::make_error_code(static_cast<std::errc>(nvmeErrno));
             cb(err, status, span);
         });
     });
-    if (post_err)
+    if (postErr)
     {
         lg2::error(
             "[addr:{ADDR}, eid:{EID}] adminSecuritySend post failed: {MSG}",

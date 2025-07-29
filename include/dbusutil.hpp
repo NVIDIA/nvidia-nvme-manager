@@ -2,6 +2,7 @@
 
 #include <phosphor-logging/lg2.hpp>
 #include <sdbusplus/bus.hpp>
+#include <sdbusplus/exception.hpp>
 #include <xyz/openbmc_project/Logging/Entry/server.hpp>
 
 const std::string resourceErrorDetected{
@@ -21,7 +22,7 @@ inline void createLogEntry(std::shared_ptr<sdbusplus::asio::connection>& conn,
                            const std::string& arg0, const std::string& arg1,
                            const std::string& resolution,
                            const std::string& ooc,
-                           const std::string logNamespace = "StorageDevice")
+                           const std::string& logNamespace = "StorageDevice")
 {
     using namespace sdbusplus::xyz::openbmc_project::Logging::server;
 
@@ -65,5 +66,4 @@ inline void createLogEntry(std::shared_ptr<sdbusplus::asio::connection>& conn,
         "xyz.openbmc_project.Logging", "/xyz/openbmc_project/logging",
         "xyz.openbmc_project.Logging.Create", "Create", messageID, severity,
         addData);
-    return;
 }

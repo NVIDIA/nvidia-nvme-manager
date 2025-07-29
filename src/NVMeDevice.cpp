@@ -33,15 +33,13 @@ using Json = nlohmann::json;
 NVMeDevice::NVMeDevice(boost::asio::io_context& io,
                        sdbusplus::asio::object_server& objectServer,
                        std::shared_ptr<sdbusplus::asio::connection>& conn,
-                       uint8_t eid, uint32_t bus, std::vector<uint8_t> addr,
-                       std::string path) :
+                       uint8_t eid, uint32_t bus,
+                       const std::vector<uint8_t>& addr,
+                       const std::string& path) :
     NvmeInterfaces(static_cast<sdbusplus::bus::bus&>(*conn), path.c_str(),
                    NvmeInterfaces::action::defer_emit),
-    std::enable_shared_from_this<NVMeDevice>(), conn(conn),
-    objServer(objectServer), scanTimer(io), driveFunctional(false),
-    smartWarning(0xff), inProgress(false), objPath(path), eid(eid), bus(bus),
-    retry(1), backupDeviceErr(false), temperatureErr(false), degradesErr(false),
-    mediaErr(false), capacityErr(false)
+    conn(conn), objServer(objectServer), scanTimer(io), objPath(path), eid(eid),
+    bus(bus)
 {
     std::filesystem::path p(path);
 
@@ -54,101 +52,85 @@ NVMeDevice::NVMeDevice(boost::asio::io_context& io,
     intf = std::get<std::shared_ptr<NVMeMiIntf>>(nvmeIntf.getInferface());
 }
 
-inline Drive::DriveFormFactor getDriveFormFactor(std::string form)
+inline Drive::DriveFormFactor getDriveFormFactor(const std::string& form)
 {
     if (form == "Drive3_5")
     {
         return Drive::DriveFormFactor::Drive3_5;
     }
-    else if (form == "Drive2_5")
+    if (form == "Drive2_5")
     {
         return Drive::DriveFormFactor::Drive2_5;
     }
-    else if (form == "EDSFF_1U_Long")
+    if (form == "EDSFF_1U_Long")
     {
         return Drive::DriveFormFactor::EDSFF_1U_Long;
     }
-    else if (form == "EDSFF_1U_Short")
+    if (form == "EDSFF_1U_Short")
     {
         return Drive::DriveFormFactor::EDSFF_1U_Short;
     }
-    else if (form == "EDSFF_E3_Short")
+    if (form == "EDSFF_E3_Short")
     {
         return Drive::DriveFormFactor::EDSFF_E3_Short;
     }
-    else if (form == "EDSFF_E3_Long")
+    if (form == "EDSFF_E3_Long")
     {
         return Drive::DriveFormFactor::EDSFF_E3_Long;
     }
-    else if (form == "M2_2230")
+    if (form == "M2_2230")
     {
         return Drive::DriveFormFactor::M2_2230;
     }
-    else if (form == "M2_2242")
+    if (form == "M2_2242")
     {
         return Drive::DriveFormFactor::M2_2242;
     }
-    else if (form == "M2_2260")
+    if (form == "M2_2260")
     {
         return Drive::DriveFormFactor::M2_2260;
     }
-    else if (form == "M2_2280")
+    if (form == "M2_2280")
     {
         return Drive::DriveFormFactor::M2_2280;
     }
-    else if (form == "M2_22110")
+    if (form == "M2_22110")
     {
         return Drive::DriveFormFactor::M2_22110;
     }
-    else if (form == "U2")
+    if (form == "U2")
     {
         return Drive::DriveFormFactor::U2;
     }
-    else if (form == "PCIeSlotFullLength")
+    if (form == "PCIeSlotFullLength")
     {
         return Drive::DriveFormFactor::PCIeSlotFullLength;
     }
-    else if (form == "PCIeSlotLowProfile")
+    if (form == "PCIeSlotLowProfile")
     {
         return Drive::DriveFormFactor::PCIeSlotLowProfile;
     }
-    else if (form == "PCIeHalfLength")
+    if (form == "PCIeHalfLength")
     {
         return Drive::DriveFormFactor::PCIeHalfLength;
     }
-    else if (form == "OEM")
+    if (form == "OEM")
     {
         return Drive::DriveFormFactor::OEM;
     }
     return Drive::DriveFormFactor::U2;
 }
 
-std::string NVMeDevice::stripString(char* src, size_t len)
+std::string NVMeDevice::stripString(std::span<const char> src)
 {
-    std::string s;
-
-    s.assign(src, src + len);
+    std::string s(src.data(), src.size());
     s.erase(s.find_last_not_of(' ') + 1);
     return s;
 }
 
-void NVMeDevice::updateLocation(std::string location, std::string locationType)
+void NVMeDevice::updateFormFactor(const std::string& form)
 {
-    LocationCode::locationCode(location, false);
-    if (locationType ==
-        "xyz.openbmc_project.Inventory.Decorator.Location.LocationTypes.Slot")
-    {
-        Location::locationType(Location::LocationTypes::Slot, false);
-    }
-    else
-    {
-        Location::locationType(Location::LocationTypes::Unknown, false);
-    }
-}
-
-void NVMeDevice::updateFormFactor(std::string form)
-{
-    size_t pos = form.find_last_of(".");
+    size_t pos = form.find_last_of('.');
     auto formFactor = getDriveFormFactor(form.substr(pos + 1));
     Drive::formFactor(formFactor, false);
 }
@@ -178,28 +160,28 @@ std::string NVMeDevice::getManufacture(uint16_t vid)
 {
     if (vid == 0x144d)
     {
-        return std::string("Samsung");
+        return {"Samsung"};
     }
-    else if (vid == 0x1344)
+    if (vid == 0x1344)
     {
-        return std::string("Mircon");
+        return {"Mircon"};
     }
-    else if (vid == 0x1e0f)
+    if (vid == 0x1e0f)
     {
-        return std::string("Kioxia");
+        return {"Kioxia"};
     }
 
-    return "Unkown";
+    return {"Unkown"};
 }
 
-inline uint32_t getMaxLinkSpeed(uint8_t speed_vec, uint8_t lanes)
+inline uint32_t getMaxLinkSpeed(uint8_t speedVec, uint8_t lanes)
 {
     // starting from 32 Gbs
     int base = 32;
 
     for (auto i = 4; i >= 0; i--)
     {
-        if (speed_vec & (1 << i))
+        if ((speedVec & (1 << i)) != 0)
         {
             break;
         }
@@ -257,36 +239,39 @@ void NVMeDevice::getDriveInfo()
             return;
         }
 
-        struct nvme_id_ctrl* id = (struct nvme_id_ctrl*)data.data();
+        auto* id =
+            static_cast<struct nvme_id_ctrl*>(static_cast<void*>(data.data()));
 
         self->Asset::manufacturer(self->getManufacture(id->vid), true);
-        self->Asset::serialNumber(self->stripString(id->sn, sizeof(id->sn)),
-                                  true);
-        self->Asset::model(self->stripString(id->mn, sizeof(id->mn)), true);
+        auto sn = self->stripString(std::span<const char, 20>(id->sn));
+        self->Asset::serialNumber(sn, true);
+        auto mn = self->stripString(std::span<const char, 40>(id->mn));
+        self->Asset::model(mn, true);
 
         std::string fr;
-        fr.assign(id->fr, id->fr + 8);
+        fr.assign(static_cast<const char*>(id->fr), 8);
         self->Version::version(fr, true);
 
-        uint64_t drive_capacity[2];
-        memcpy(&drive_capacity, id->tnvmcap, 16);
+        std::array<uint64_t, 2> driveCapacity{};
+        memcpy(driveCapacity.data(), static_cast<const void*>(id->tnvmcap),
+               sizeof(driveCapacity));
 
         /* 8 bytes presenting the drive capacity is enough to support all
          * drives outside market.
          */
-        self->Drive::capacity(drive_capacity[0], true);
+        self->Drive::capacity(driveCapacity[0], true);
 
         // check the drive sanitize capability
         std::vector<EraseMethod> saniCap;
-        if (id->sanicap & (NVME_CTRL_SANICAP_OWS))
+        if ((id->sanicap & (NVME_CTRL_SANICAP_OWS)) != 0U)
         {
             saniCap.push_back(EraseMethod::Overwrite);
         }
-        if (id->sanicap & (NVME_CTRL_SANICAP_BES))
+        if ((id->sanicap & (NVME_CTRL_SANICAP_BES)) != 0U)
         {
             saniCap.push_back(EraseMethod::BlockErase);
         }
-        if (id->sanicap & (NVME_CTRL_SANICAP_CES))
+        if ((id->sanicap & (NVME_CTRL_SANICAP_CES)) != 0U)
         {
             saniCap.push_back(EraseMethod::CryptoErase);
         }
@@ -309,17 +294,27 @@ void NVMeDevice::getDriveLink()
             self->pollDrive();
             return;
         }
-        self->PortInfo::maxSpeed(
-            getMaxLinkSpeed(port->pcie.sls, port->pcie.mlw), true);
-        self->PortInfo::currentSpeed(
-            getCurrLinkSpeed(port->pcie.cls, port->pcie.nlw), true);
+        const auto& info =
+            port->pcie; // NOLINT(cppcoreguidelines-pro-type-union-access)
+        uint8_t sls = info.sls;
+        uint8_t mlw = info.mlw;
+        uint8_t cls = info.cls;
+        uint8_t nlw = info.nlw;
+
+        self->PortInfo::maxSpeed(getMaxLinkSpeed(sls, mlw), true);
+        self->PortInfo::currentSpeed(getCurrLinkSpeed(cls, nlw), true);
         self->pollDrive();
     });
 }
 
 void NVMeDevice::initialize()
 {
-    presence = 0;
+    if (initialized)
+    {
+        return;
+    }
+    initialized = true;
+    presence = false;
 
     Drive::type(DriveType::SSD, true);
     Drive::protocol(DriveProtocol::NVMe, true);
@@ -329,7 +324,7 @@ void NVMeDevice::initialize()
     intf->miScanCtrl([self{shared_from_this()}](
                          const std::error_code& ec,
                          const std::vector<nvme_mi_ctrl_t>& ctrlList) mutable {
-        if (ec || ctrlList.size() == 0)
+        if (ec || ctrlList.empty())
         {
             lg2::error(
                 "eid:{ID} - fail to scan controllers for the nvme subsystem {ERR}: {MSG}",
@@ -346,7 +341,7 @@ void NVMeDevice::initialize()
     });
 }
 
-void NVMeDevice::markStatus(std::string status)
+void NVMeDevice::markStatus(const std::string& status)
 {
     assocs = {};
 
@@ -381,7 +376,7 @@ void NVMeDevice::markFunctional(bool functional)
     if (driveFunctional != functional)
     {
         // mark device state
-        if (functional == false)
+        if (!functional)
         {
             OperationalStatus::functional(false, true);
             OperationalStatus::state(OperationalStatus::StateType::Fault, true);
@@ -404,7 +399,7 @@ void NVMeDevice::markFunctional(bool functional)
 
 void NVMeDevice::generateRedfishEventbySmart(uint8_t sw)
 {
-    if (sw & (NVME_SMART_CRIT_PMR_RO))
+    if ((sw & (NVME_SMART_CRIT_PMR_RO)) != 0)
     {
         createLogEntry(
             conn, "ResourceEvent.1.0.ResourceErrorsDetected", Level::Warning,
@@ -412,14 +407,14 @@ void NVMeDevice::generateRedfishEventbySmart(uint8_t sw)
             "Persistent Memory Region has become read-only or unreliable",
             drivePfaResolution, redfishDrivePathPrefix + driveIndex);
     }
-    if (sw & (NVME_SMART_CRIT_VOLATILE_MEMORY))
+    if ((sw & (NVME_SMART_CRIT_VOLATILE_MEMORY)) != 0)
     {
         createLogEntry(conn, "ResourceEvent.1.0.ResourceErrorsDetected",
                        Level::Warning, redfishDriveName + driveIndex,
                        "volatile memory backup device has failed",
                        drivePfaResolution, redfishDrivePathPrefix + driveIndex);
     }
-    if (sw & (NVME_SMART_CRIT_SPARE))
+    if ((sw & (NVME_SMART_CRIT_SPARE)) != 0)
     {
         createLogEntry(
             conn, "ResourceEvent.1.0.ResourceErrorsDetected", Level::Warning,
@@ -427,21 +422,21 @@ void NVMeDevice::generateRedfishEventbySmart(uint8_t sw)
             "available spare capacity has fallen below the threshold",
             drivePfaResolution, redfishDrivePathPrefix + driveIndex);
     }
-    if (sw & (NVME_SMART_CRIT_DEGRADED))
+    if ((sw & (NVME_SMART_CRIT_DEGRADED)) != 0)
     {
         createLogEntry(conn, "ResourceEvent.1.0.ResourceErrorsDetected",
                        Level::Warning, redfishDriveName + driveIndex,
                        "NVM subsystem reliability has been degraded",
                        drivePfaResolution, redfishDrivePathPrefix + driveIndex);
     }
-    if (sw & (NVME_SMART_CRIT_MEDIA))
+    if ((sw & (NVME_SMART_CRIT_MEDIA)) != 0)
     {
         createLogEntry(conn, "ResourceEvent.1.0.ResourceErrorsDetected",
                        Level::Warning, redfishDriveName + driveIndex,
                        "all of the media has been placed in read only mode",
                        drivePfaResolution, redfishDrivePathPrefix + driveIndex);
     }
-    if (sw & (NVME_SMART_CRIT_TEMPERATURE))
+    if ((sw & (NVME_SMART_CRIT_TEMPERATURE)) != 0)
     {
         createLogEntry(
             conn, "ResourceEvent.1.0.ResourceErrorsDetected", Level::Warning,
@@ -460,7 +455,7 @@ void NVMeDevice::updatePercent(uint32_t endTime)
         lg2::info("no estimated sanitize time is reported by drive");
     }
     auto time = getEstimateTime() + pollInterval;
-    auto percent = (time * 100) / endTime;
+    uint32_t percent = (endTime > 0) ? ((time * 100) / endTime) : 0;
 
     lg2::info("percent: {NUM} - {ECLTIME} / {MAXTIME}\n", "NUM", percent,
               "ECLTIME", time, "MAXTIME", endTime);
@@ -483,13 +478,13 @@ void NVMeDevice::pollDrive()
         {
             return; // we're being canceled
         }
-        else if (errorCode)
+        if (errorCode)
         {
             lg2::error("Error: {MSG}", "MSG", errorCode.message());
             return;
         }
         // try to re-initialize the drive
-        if (self->presence == false)
+        if (!self->presence)
         {
             self->initialize();
             return;
@@ -497,10 +492,10 @@ void NVMeDevice::pollDrive()
 
         auto miIntf = self->getIntf();
         if (self->Operation::operation() == OperationType::Sanitize &&
-            self->inProgress == true)
+            self->inProgress)
         {
             miIntf->adminGetLogPage(
-                self->ctrl, NVME_LOG_LID_SANITIZE, 0, 0, 0,
+                self->ctrl, NVME_LOG_LID_SANITIZE, 0, 0,
                 [self](const std::error_code& ec, std::span<uint8_t> status) {
                 if (ec)
                 {
@@ -510,8 +505,8 @@ void NVMeDevice::pollDrive()
                     return;
                 }
 
-                struct nvme_sanitize_log_page* log =
-                    (struct nvme_sanitize_log_page*)status.data();
+                auto* log = static_cast<struct nvme_sanitize_log_page*>(
+                    static_cast<void*>(status.data()));
 
                 uint8_t res = log->sstat & NVME_SANITIZE_SSTAT_STATUS_MASK;
                 if (res == NVME_SANITIZE_SSTAT_STATUS_COMPLETE_SUCCESS ||
@@ -595,11 +590,11 @@ void NVMeDevice::pollDrive()
             self->sdbusplus::xyz::openbmc_project::Inventory::Item::server::
                 Drive::predictedMediaLifeLeftPercent(100 - percentage, true);
 
-            self->markFunctional(ss->nss & 0x20);
+            self->markFunctional((ss->nss & 0x20) != 0);
         });
 
         miIntf->adminGetLogPage(
-            self->ctrl, NVME_LOG_LID_SMART, 0xFFFFFFFF, 0, 0,
+            self->ctrl, NVME_LOG_LID_SMART, 0xFFFFFFFF, 0,
             [self](const std::error_code& ec, std::span<uint8_t> smart) {
             if (ec)
             {
@@ -610,8 +605,8 @@ void NVMeDevice::pollDrive()
                 return;
             }
 
-            struct nvme_smart_log* log;
-            log = (struct nvme_smart_log*)smart.data();
+            auto* log = static_cast<struct nvme_smart_log*>(
+                static_cast<void*>(smart.data()));
 
             auto cw = log->critical_warning;
 
@@ -641,19 +636,19 @@ void NVMeDevice::pollDrive()
             {
                 // the error indicator is from smart warning
                 self->NVMeStatus::backupDeviceFault(
-                    cw & (NVME_SMART_CRIT_VOLATILE_MEMORY), true);
+                    (cw & (NVME_SMART_CRIT_VOLATILE_MEMORY)) != 0, true);
 
-                self->NVMeStatus::capacityFault(cw & (NVME_SMART_CRIT_SPARE),
-                                                true);
+                self->NVMeStatus::capacityFault(
+                    (cw & (NVME_SMART_CRIT_SPARE)) != 0, true);
 
                 self->NVMeStatus::temperatureFault(
-                    cw & (NVME_SMART_CRIT_TEMPERATURE), true);
+                    (cw & (NVME_SMART_CRIT_TEMPERATURE)) != 0, true);
 
-                self->NVMeStatus::degradesFault(cw & (NVME_SMART_CRIT_DEGRADED),
-                                                true);
+                self->NVMeStatus::degradesFault(
+                    (cw & (NVME_SMART_CRIT_DEGRADED)) != 0, true);
 
-                self->NVMeStatus::mediaFault(cw & ((NVME_SMART_CRIT_MEDIA)),
-                                             true);
+                self->NVMeStatus::mediaFault(
+                    (cw & ((NVME_SMART_CRIT_MEDIA))) != 0, true);
 
                 self->NVMeStatus::smartWarnings(std::to_string(cw), true);
 
@@ -669,7 +664,8 @@ void NVMeDevice::pollDrive()
             }
             self->smartWarning = cw;
             boost::multiprecision::uint128_t powerOnHours;
-            memcpy((void*)&powerOnHours, log->power_on_hours,
+            std::span powerOnHoursSpan(log->power_on_hours);
+            memcpy((void*)&powerOnHours, powerOnHoursSpan.data(),
                    sizeof(powerOnHours));
             self->pollDrive();
         });
@@ -753,5 +749,3 @@ void NVMeDevice::erase(uint16_t overwritePasses, EraseMethod type)
         });
     }
 }
-
-NVMeDevice::~NVMeDevice() {}

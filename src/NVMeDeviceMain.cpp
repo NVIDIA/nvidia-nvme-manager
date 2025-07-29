@@ -1,3 +1,5 @@
+#include <nvme-mi_config.h>
+
 #include <MCTPDiscovery.hpp>
 #include <NVMeDevice.hpp>
 #include <boost/asio/steady_timer.hpp>
@@ -9,7 +11,11 @@
 
 const constexpr char* mctpEpsPath = "/xyz/openbmc_project/mctp";
 
-std::unordered_map<uint8_t, std::shared_ptr<NVMeDevice>> driveMap;
+std::unordered_map<uint8_t, std::shared_ptr<NVMeDevice>>& getDriveMap()
+{
+    static std::unordered_map<uint8_t, std::shared_ptr<NVMeDevice>> driveMap{};
+    return driveMap;
+}
 
 static void handleEmEndpoints(const ManagedObjectType& objData)
 {
@@ -27,36 +33,15 @@ static void handleEmEndpoints(const ManagedObjectType& objData)
         {
             continue;
         }
-
-        ep = data.find("xyz.openbmc_project.Inventory.Decorator.LocationCode");
-        if (ep != data.end())
-        {
-            const Properties& prop = ep->second;
-            auto findProp = prop.find("LocationCode");
-            if (findProp == prop.end())
-            {
-                continue;
-            }
-            loc = std::get<std::string>(findProp->second);
-        }
-        ep = data.find("xyz.openbmc_project.Inventory.Decorator.Location");
-        if (ep != data.end())
-        {
-            const Properties& prop = ep->second;
-            auto findProp = prop.find("LocationType");
-            if (findProp == prop.end())
-            {
-                continue;
-            }
-            locationType = std::get<std::string>(findProp->second);
-        }
         ep = data.find("xyz.openbmc_project.Inventory.Decorator.I2CDevice");
         if (ep != data.end())
         {
             const Properties& prop = ep->second;
             auto findProp = prop.find("Bus");
             if (findProp == prop.end())
+            {
                 continue;
+            }
             bus = std::get<uint64_t>(findProp->second);
         }
         ep = data.find("xyz.openbmc_project.Inventory.Item.Drive");
@@ -92,7 +77,7 @@ static void handleEmEndpoints(const ManagedObjectType& objData)
                 }
             }
         }
-
+        auto& driveMap = getDriveMap();
         for (const auto& [_, context] : driveMap)
         {
             // update location and formfactor by comparing bus number
@@ -100,7 +85,6 @@ static void handleEmEndpoints(const ManagedObjectType& objData)
             {
                 continue;
             }
-            context->updateLocation(loc, locationType);
             context->updateFormFactor(form);
             if (!driveAssoc.empty())
             {
@@ -113,6 +97,7 @@ static void handleEmEndpoints(const ManagedObjectType& objData)
     // wait for worker ready to handle NVMe-MI commands.
     std::this_thread::sleep_for(std::chrono::seconds(2));
 
+    auto& driveMap = getDriveMap();
     for (const auto& [_, context] : driveMap)
     {
         context->initialize();
@@ -122,11 +107,10 @@ static void handleEmEndpoints(const ManagedObjectType& objData)
 void collectInventory(
     std::shared_ptr<sdbusplus::asio::connection>& dbusConnection)
 {
-    auto getter = std::make_shared<getObjects>(
-        dbusConnection,
-        std::move([&dbusConnection](const ManagedObjectType& endpoints) {
+    auto getter = std::make_shared<GetObjects>(
+        dbusConnection, [](const ManagedObjectType& endpoints) {
         handleEmEndpoints(endpoints);
-    }));
+    });
     getter->getConfiguration(std::vector<std::string>{
         "xyz.openbmc_project.Inventory.Item.Drive",
         "xyz.openbmc_project.Inventory.Item.NVMe",
@@ -153,12 +137,16 @@ static void handleMCTPEndpoints(
             const Properties& prop = ep->second;
             auto findEid = prop.find("EID");
             if (findEid == prop.end())
+            {
                 continue;
+            }
             eid = std::get<size_t>(findEid->second);
 
             auto findTypes = prop.find("SupportedMessageTypes");
             if (findTypes == prop.end())
+            {
                 continue;
+            }
             auto msgTypes = std::get<std::vector<uint8_t>>(findTypes->second);
             std::vector<uint8_t>::iterator it = std::find(
                 msgTypes.begin(), msgTypes.end(), NVME_MI_MSGTYPE_NVME & 0x7F);
@@ -173,7 +161,9 @@ static void handleMCTPEndpoints(
             const Properties& prop = sockInfo->second;
             auto findAddr = prop.find("Address");
             if (findAddr == prop.end())
+            {
                 continue;
+            }
             addr = std::get<std::vector<uint8_t>>(findAddr->second);
         }
         if (!nvmeCap)
@@ -190,22 +180,26 @@ static void handleMCTPEndpoints(
             const Properties& prop = findBus->second;
             auto find = prop.find("Bus");
             if (find == prop.end())
+            {
                 continue;
+            }
             bus = std::get<uint32_t>(find->second);
         }
 
+        auto& driveMap = getDriveMap();
         addr.push_back(0);
         if (driveMap.find(eid) == driveMap.end())
         {
             lg2::info("Drive is added on EID: {EID}", "EID", eid);
 
-            std::string p("/xyz/openbmc_project/inventory/item/drive/");
+            std::string p("/xyz/openbmc_project/inventory/system/nvme/");
+            p += std::string(drivePrefix);
             p += std::to_string(eid);
-            auto DrivePtr = std::make_shared<NVMeDevice>(
+            auto drivePtr = std::make_shared<NVMeDevice>(
                 io, objectServer, dbusConnection, eid, bus, std::move(addr), p);
 
             // put drive object to map in order to implement drive removal.
-            driveMap.emplace(eid, DrivePtr);
+            driveMap.emplace(eid, drivePtr);
         }
         else
         {
@@ -220,11 +214,11 @@ void createDrives(boost::asio::io_context& io,
                   sdbusplus::asio::object_server& objectServer,
                   std::shared_ptr<sdbusplus::asio::connection>& dbusConnection)
 {
-    auto getter = std::make_shared<getObjects>(
-        dbusConnection, std::move([&io, &objectServer, &dbusConnection](
-                                      const ManagedObjectType& mctpEndpoints) {
+    auto getter = std::make_shared<GetObjects>(
+        dbusConnection, [&io, &objectServer, &dbusConnection](
+                            const ManagedObjectType& mctpEndpoints) {
         handleMCTPEndpoints(io, objectServer, dbusConnection, mctpEndpoints);
-    }));
+    });
     getter->getConfiguration(std::vector<std::string>{
         "xyz.openbmc_project.MCTP.Endpoint",
         "xyz.openbmc_project.Common.UnixSocket",
@@ -241,15 +235,23 @@ static void interfaceRemoved(sdbusplus::message::message& message)
 
     std::string objectName;
     boost::container::flat_map<std::string, std::variant<size_t>> values;
-    message.read(objectName, values);
 
-    auto findEid = values.find("EID");
-    if (findEid != values.end())
+    try
     {
-        auto obj = findEid->second;
-        auto eid = std::get<size_t>(obj);
-        lg2::info("Remove Drive:{EID}.", "EID", eid);
-        // Todo: implement it for drive hotplug.
+        message.read(objectName, values);
+
+        auto findEid = values.find("EID");
+        if (findEid != values.end())
+        {
+            auto obj = findEid->second;
+            auto eid = std::get<size_t>(obj);
+            lg2::info("Remove Drive:{EID}.", "EID", eid);
+            // Todo: implement it for drive hotplug.
+        }
+    }
+    catch (const sdbusplus::exception::SdBusError& e)
+    {
+        lg2::error("SdBusError: {ERRMSG}", "ERRMSG", e.what());
     }
 }
 
@@ -344,4 +346,5 @@ int main()
     matches.emplace_back(std::move(ifaceRemovedMatch));
 
     io.run();
+    return 0;
 }

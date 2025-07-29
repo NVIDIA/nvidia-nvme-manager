@@ -20,8 +20,8 @@ add_project_arguments(
     '-DBOOST_NO_RTTI',
     '-DBOOST_NO_TYPEID',
     '-DBOOST_ALL_NO_LIB',
-    '-DBOOST_ASIO_DISABLE_THREADS',
     '-DBOOST_ALLOW_DEPRECATED_HEADERS',
+    '-DBOOST_ASIO_HAS_THREADS',
     '-DCONFIG_LIBMCTP',
     language: 'cpp',
 )

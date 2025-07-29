@@ -53,8 +53,7 @@ using Storage =
 
 using NvmeInterfaces = sdbusplus::server::object::object<
     Item, StorageController, PortInfo, Drive, Health, OperationalStatus, Asset,
-    Version, NVMeStatus, LocationCode, Location, Associations, Progress,
-    SecureErase, Operation>;
+    Version, NVMeStatus, Associations, Progress, SecureErase, Operation>;
 using AssociationList =
     std::vector<std::tuple<std::string, std::string, std::string>>;
 
@@ -70,23 +69,28 @@ class NVMeDevice :
 
     NVMeDevice(boost::asio::io_context& io,
                sdbusplus::asio::object_server& objectServer,
-               std::shared_ptr<sdbusplus::asio::connection>& dbusConnection,
-               uint8_t, uint32_t, std::vector<uint8_t>, std::string path);
-    ~NVMeDevice();
+               std::shared_ptr<sdbusplus::asio::connection>& conn,
+               uint8_t /*eid*/, uint32_t /*bus*/,
+               const std::vector<uint8_t> /*addr*/&, const std::string& path);
+    NVMeDevice(const NVMeDevice& other) = delete;
+
+    NVMeDevice(NVMeDevice&& other) = delete;
+    NVMeDevice& operator=(NVMeDevice&& other) = delete;
+    ~NVMeDevice() override = default;
 
     NVMeDevice& operator=(const NVMeDevice& other) = delete;
 
     void initialize();
-    void getDriveInfo(void);
-    void getDriveLink(void);
-    void pollDrive(void);
+    void getDriveInfo();
+    void getDriveLink();
+    void pollDrive();
     void markFunctional(bool functional);
-    void markStatus(std::string status);
+    void markStatus(const std::string& status);
     void generateRedfishEventbySmart(uint8_t sw);
     void updateSanitizeStatus(EraseMethod type);
 
-    std::string stripString(char* src, size_t len);
-    std::string getManufacture(uint16_t vid);
+    static std::string stripString(std::span<const char> src);
+    static std::string getManufacture(uint16_t vid);
     std::string driveAssociation;
 
     std::shared_ptr<NVMeMiIntf> getIntf()
@@ -94,14 +98,14 @@ class NVMeDevice :
         return intf;
     }
 
-    bool getDriveFunctional()
+    bool getDriveFunctional() const
     {
         return driveFunctional;
     }
 
-    bool getNodmmas()
+    bool getNodmmas() const
     {
-        return nodmmas;
+        return nodmmas != 0U;
     }
 
     void setNodmmas(uint8_t value)
@@ -123,7 +127,7 @@ class NVMeDevice :
         eraseType = type;
     }
 
-    uint32_t getEstimateTime()
+    uint32_t getEstimateTime() const
     {
         return estimatedTime;
     }
@@ -132,38 +136,37 @@ class NVMeDevice :
     {
         estimatedTime = time;
     }
-    uint32_t getI2CBus()
+    uint32_t getI2CBus() const
     {
         return bus;
     }
 
     void updatePercent(uint32_t endTime);
-    void updateLocation(std::string loc, std::string locType);
-    void updateFormFactor(std::string form);
+    void updateFormFactor(const std::string& form);
     void updateDriveAssociations();
-    void erase(uint16_t overwritePasses, EraseMethod eraseType);
+    void erase(uint16_t overwritePasses, EraseMethod eraseType) override;
 
-    bool backupDeviceFault(bool value)
+    bool backupDeviceFault(bool value) override
     {
         backupDeviceErr = value;
         return value;
     }
-    bool temperatureFault(bool value)
+    bool temperatureFault(bool value) override
     {
         temperatureErr = value;
         return value;
     }
-    bool degradesFault(bool value)
+    bool degradesFault(bool value) override
     {
         degradesErr = value;
         return value;
     }
-    bool mediaFault(bool value)
+    bool mediaFault(bool value) override
     {
         mediaErr = value;
         return value;
     }
-    bool capacityFault(bool value)
+    bool capacityFault(bool value) override
     {
         capacityErr = value;
         return value;
@@ -174,30 +177,31 @@ class NVMeDevice :
     sdbusplus::asio::object_server& objServer;
     boost::asio::steady_timer scanTimer;
 
-    bool driveFunctional;
-    uint8_t smartWarning;
+    bool driveFunctional{false};
+    uint8_t smartWarning{0xff};
     NVMeIntf nvmeIntf;
     std::shared_ptr<NVMeMiIntf> intf;
     std::string driveIndex;
 
     AssociationList assocs;
-    nvme_mi_ctrl_t ctrl;
-    bool presence;
-    bool inProgress;
+    nvme_mi_ctrl_t ctrl{};
+    bool initialized{false};
+    bool presence{false};
+    bool inProgress{false};
     std::string objPath;
     uint8_t eid;
     uint32_t bus;
-    uint8_t retry;
+    uint8_t retry{1};
 
     // flag of no-deallocate modifies meida after sanitize(NODMMAS)
-    uint32_t nodmmas;
-    EraseMethod eraseType;
-    uint32_t estimatedTime;
+    uint32_t nodmmas{0};
+    EraseMethod eraseType = EraseMethod::BlockErase;
+    uint32_t estimatedTime{0};
 
     // triggered the smart error from Dbus.
-    bool backupDeviceErr;
-    bool temperatureErr;
-    bool degradesErr;
-    bool mediaErr;
-    bool capacityErr;
+    bool backupDeviceErr{false};
+    bool temperatureErr{false};
+    bool degradesErr{false};
+    bool mediaErr{false};
+    bool capacityErr{false};
 };
