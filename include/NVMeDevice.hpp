@@ -1,6 +1,6 @@
 #pragma once
 #include <NVMeMi.hpp>
-#include <boost/asio/io_service.hpp>
+#include <boost/asio/io_context.hpp>
 #include <boost/asio/steady_timer.hpp>
 #include <phosphor-logging/elog-errors.hpp>
 #include <phosphor-logging/lg2.hpp>
@@ -67,7 +67,7 @@ class NVMeDevice :
     static constexpr const char* mctpEpInterface =
         "xyz.openbmc_project.MCTP.Endpoint";
 
-    NVMeDevice(boost::asio::io_service& io,
+    NVMeDevice(boost::asio::io_context& io,
                sdbusplus::asio::object_server& objectServer,
                std::shared_ptr<sdbusplus::asio::connection>& conn,
                uint8_t /*eid*/, uint32_t /*bus*/,
