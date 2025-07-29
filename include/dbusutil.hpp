@@ -1,6 +1,8 @@
 #pragma once
 
+#include <boost/system/error_code.hpp>
 #include <phosphor-logging/lg2.hpp>
+#include <sdbusplus/asio/connection.hpp>
 #include <sdbusplus/bus.hpp>
 #include <sdbusplus/exception.hpp>
 #include <xyz/openbmc_project/Logging/Entry/server.hpp>
@@ -62,8 +64,7 @@ inline void createLogEntry(std::shared_ptr<sdbusplus::asio::connection>& conn,
                        "ERROR_MESSAGE", ec.message());
             return;
         }
-    },
-        "xyz.openbmc_project.Logging", "/xyz/openbmc_project/logging",
+    }, "xyz.openbmc_project.Logging", "/xyz/openbmc_project/logging",
         "xyz.openbmc_project.Logging.Create", "Create", messageID, severity,
         addData);
 }

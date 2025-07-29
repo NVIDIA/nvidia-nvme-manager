@@ -57,8 +57,6 @@ using NvmeInterfaces = sdbusplus::server::object::object<
 using AssociationList =
     std::vector<std::tuple<std::string, std::string, std::string>>;
 
-namespace fs = std::filesystem;
-
 class NVMeDevice :
     public NvmeInterfaces,
     public std::enable_shared_from_this<NVMeDevice>

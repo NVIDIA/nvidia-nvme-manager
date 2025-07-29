@@ -5,7 +5,7 @@ project(
         'warning_level=3',
         'werror=true',
         'buildtype=debugoptimized',
-        'cpp_std=c++23'
+        'cpp_std=c++23',
     ],
     license: 'Apache-2.0',
     version: '0.1',
@@ -29,13 +29,7 @@ add_project_arguments(
 cpp = meson.get_compiler('cpp')
 
 
-sdbusplus = dependency(
-    'sdbusplus',
-    fallback: [
-        'sdbusplus',
-        'sdbusplus_dep'
-    ],
-)
+sdbusplus = dependency('sdbusplus', fallback: ['sdbusplus', 'sdbusplus_dep'])
 
 phosphor_logging_dep = dependency(
     'phosphor-logging',
@@ -50,7 +44,7 @@ else
         include_directories: include_directories(
             'subprojects/nlohmann-json/single_include',
             'subprojects/nlohmann-json/single_include/nlohmann',
-        )
+        ),
     )
 endif
 
@@ -60,7 +54,8 @@ libnvme_mi_dep = dependency('libnvme-mi')
 systemd = dependency('systemd')
 systemd_system_unit_dir = systemd.get_variable(
     pkgconfig: 'systemdsystemunitdir',
-    pkgconfig_define: ['prefix', get_option('prefix')])
+    pkgconfig_define: ['prefix', get_option('prefix')],
+)
 threads = dependency('threads')
 
 default_deps = [

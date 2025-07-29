@@ -238,14 +238,14 @@ void NVMeDevice::getDriveInfo()
             }
             return;
         }
-
+        // NOLINTNEXTLINE(bugprone-casting-through-void)
         auto* id =
             static_cast<struct nvme_id_ctrl*>(static_cast<void*>(data.data()));
 
-        self->Asset::manufacturer(self->getManufacture(id->vid), true);
-        auto sn = self->stripString(std::span<const char, 20>(id->sn));
+        self->Asset::manufacturer(NVMeDevice::getManufacture(id->vid), true);
+        auto sn = NVMeDevice::stripString(std::span<const char, 20>(id->sn));
         self->Asset::serialNumber(sn, true);
-        auto mn = self->stripString(std::span<const char, 40>(id->mn));
+        auto mn = NVMeDevice::stripString(std::span<const char, 40>(id->mn));
         self->Asset::model(mn, true);
 
         std::string fr;
@@ -505,6 +505,7 @@ void NVMeDevice::pollDrive()
                     return;
                 }
 
+                // NOLINTNEXTLINE(bugprone-casting-through-void)
                 auto* log = static_cast<struct nvme_sanitize_log_page*>(
                     static_cast<void*>(status.data()));
 
@@ -605,6 +606,7 @@ void NVMeDevice::pollDrive()
                 return;
             }
 
+            // NOLINTNEXTLINE(bugprone-casting-through-void)
             auto* log = static_cast<struct nvme_smart_log*>(
                 static_cast<void*>(smart.data()));
 

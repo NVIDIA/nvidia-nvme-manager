@@ -1,6 +1,4 @@
-unit_files = [
-    ['nvidia-nvme-manager.service'],
-]
+unit_files = [['nvidia-nvme-manager.service']]
 
 foreach tuple : unit_files
     configure_file(

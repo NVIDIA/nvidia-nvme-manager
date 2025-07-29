@@ -19,10 +19,7 @@ std::unordered_map<uint8_t, std::shared_ptr<NVMeDevice>>& getDriveMap()
 
 static void handleEmEndpoints(const ManagedObjectType& objData)
 {
-    std::string loc;
-    std::string locationType;
     std::string form;
-    std::string parentChassis;
     std::string driveAssoc;
     uint64_t bus = -1;
 
@@ -257,94 +254,105 @@ static void interfaceRemoved(sdbusplus::message::message& message)
 
 int main()
 {
-    boost::asio::io_context io;
-    auto bus = std::make_shared<sdbusplus::asio::connection>(io);
-    sdbusplus::asio::object_server objectServer(bus, true);
-    objectServer.add_manager("/xyz/openbmc_project/inventory/item/drive");
+    try
+    {
+        boost::asio::io_context io;
+        auto bus = std::make_shared<sdbusplus::asio::connection>(io);
+        sdbusplus::asio::object_server objectServer(bus, true);
+        objectServer.add_manager("/xyz/openbmc_project/inventory/item/drive");
 
-    std::vector<std::unique_ptr<sdbusplus::bus::match::match>> matches;
+        std::vector<std::unique_ptr<sdbusplus::bus::match::match>> matches;
 
-    boost::asio::post(io, [&]() {
-        createDrives(io, objectServer, bus);
-        bus->request_name("xyz.openbmc_project.NVMeDevice");
-    });
-
-    boost::asio::steady_timer filterTimer(io);
-    std::function<void(sdbusplus::message::message&)> emHandler =
-        [&filterTimer, &bus](sdbusplus::message::message&) {
-        filterTimer.expires_after(std::chrono::seconds(1));
-
-        filterTimer.async_wait([&](const boost::system::error_code& ec) {
-            if (ec == boost::asio::error::operation_aborted)
-            {
-                return; // we're being canceled
-            }
-
-            if (ec)
-            {
-                lg2::error("Error: {MSG}", "MSG", ec.message());
-                return;
-            }
-
-            // collect inventory data from EM
-            collectInventory(bus);
-        });
-    };
-
-    // Add interface for storage inventory
-    std::string storagePath = "/xyz/openbmc_project/inventory/item/storage/1";
-    std::unique_ptr<Storage> storageIface = std::make_unique<Storage>(
-        static_cast<sdbusplus::bus::bus&>(*bus), storagePath.c_str());
-    storageIface->emit_added();
-
-    auto emIfaceAddedMatch = std::make_unique<sdbusplus::bus::match::match>(
-        static_cast<sdbusplus::bus::bus&>(*bus),
-        "type='signal',member='InterfacesAdded',arg0path='" +
-            std::string("/xyz/openbmc_project/inventory/system/nvme") + "/'",
-        emHandler);
-
-    matches.emplace_back(std::move(emIfaceAddedMatch));
-
-    std::function<void(sdbusplus::message::message&)> eventHandler =
-        [&filterTimer, &io, &objectServer, &bus](sdbusplus::message::message&) {
-        // this implicitly cancels the timer
-        filterTimer.expires_after(std::chrono::seconds(1));
-
-        filterTimer.async_wait([&](const boost::system::error_code& ec) {
-            if (ec == boost::asio::error::operation_aborted)
-            {
-                return; // we're being canceled
-            }
-
-            if (ec)
-            {
-                lg2::error("Error: {MSG}", "MSG", ec.message());
-                return;
-            }
-
+        boost::asio::post(io, [&]() {
             createDrives(io, objectServer, bus);
+            bus->request_name("xyz.openbmc_project.NVMeDevice");
         });
-    };
 
-    auto ifaceAddedMatch = std::make_unique<sdbusplus::bus::match::match>(
-        static_cast<sdbusplus::bus::bus&>(*bus),
-        "type='signal',member='InterfacesAdded',arg0path='" +
-            std::string(mctpEpsPath) + "/'",
-        eventHandler);
-    matches.emplace_back(std::move(ifaceAddedMatch));
+        boost::asio::steady_timer filterTimer(io);
+        std::function<void(sdbusplus::message::message&)> emHandler =
+            [&filterTimer, &bus](sdbusplus::message::message&) {
+            filterTimer.expires_after(std::chrono::seconds(1));
 
-    // Watch for mctp service to remove configuration interfaces
-    // so the corresponding Drives can be removed.
-    auto ifaceRemovedMatch = std::make_unique<sdbusplus::bus::match::match>(
-        static_cast<sdbusplus::bus::bus&>(*bus),
-        "type='signal',member='InterfacesRemoved',arg0path='" +
-            std::string(mctpEpsPath) + "/'",
-        [&filterTimer](sdbusplus::message::message& msg) {
-        filterTimer.cancel();
-        interfaceRemoved(msg);
-    });
-    matches.emplace_back(std::move(ifaceRemovedMatch));
+            filterTimer.async_wait([&](const boost::system::error_code& ec) {
+                if (ec == boost::asio::error::operation_aborted)
+                {
+                    return; // we're being canceled
+                }
 
-    io.run();
-    return 0;
+                if (ec)
+                {
+                    lg2::error("Error: {MSG}", "MSG", ec.message());
+                    return;
+                }
+
+                // collect inventory data from EM
+                collectInventory(bus);
+            });
+        };
+
+        // Add interface for storage inventory
+        std::string storagePath =
+            "/xyz/openbmc_project/inventory/item/storage/1";
+        std::unique_ptr<Storage> storageIface = std::make_unique<Storage>(
+            static_cast<sdbusplus::bus::bus&>(*bus), storagePath.c_str());
+        storageIface->emit_added();
+
+        auto emIfaceAddedMatch = std::make_unique<sdbusplus::bus::match::match>(
+            static_cast<sdbusplus::bus::bus&>(*bus),
+            "type='signal',member='InterfacesAdded',arg0path='" +
+                std::string("/xyz/openbmc_project/inventory/system/nvme") +
+                "/'",
+            emHandler);
+
+        matches.emplace_back(std::move(emIfaceAddedMatch));
+
+        std::function<void(sdbusplus::message::message&)> eventHandler =
+            [&filterTimer, &io, &objectServer,
+             &bus](sdbusplus::message::message&) {
+            // this implicitly cancels the timer
+            filterTimer.expires_after(std::chrono::seconds(1));
+
+            filterTimer.async_wait([&](const boost::system::error_code& ec) {
+                if (ec == boost::asio::error::operation_aborted)
+                {
+                    return; // we're being canceled
+                }
+
+                if (ec)
+                {
+                    lg2::error("Error: {MSG}", "MSG", ec.message());
+                    return;
+                }
+
+                createDrives(io, objectServer, bus);
+            });
+        };
+
+        auto ifaceAddedMatch = std::make_unique<sdbusplus::bus::match::match>(
+            static_cast<sdbusplus::bus::bus&>(*bus),
+            "type='signal',member='InterfacesAdded',arg0path='" +
+                std::string(mctpEpsPath) + "/'",
+            eventHandler);
+        matches.emplace_back(std::move(ifaceAddedMatch));
+
+        // Watch for mctp service to remove configuration interfaces
+        // so the corresponding Drives can be removed.
+        auto ifaceRemovedMatch = std::make_unique<sdbusplus::bus::match::match>(
+            static_cast<sdbusplus::bus::bus&>(*bus),
+            "type='signal',member='InterfacesRemoved',arg0path='" +
+                std::string(mctpEpsPath) + "/'",
+            [&filterTimer](sdbusplus::message::message& msg) {
+            filterTimer.cancel();
+            interfaceRemoved(msg);
+        });
+        matches.emplace_back(std::move(ifaceRemovedMatch));
+
+        io.run();
+        return 0;
+    }
+    catch (const std::exception& e)
+    {
+        lg2::error("Fatal error in main: {ERRMSG}", "ERRMSG", e.what());
+        return 1;
+    }
 }
