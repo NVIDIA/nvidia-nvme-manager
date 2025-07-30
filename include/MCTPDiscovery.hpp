@@ -72,8 +72,7 @@ struct GetObjects : std::enable_shared_from_this<GetObjects>
 {
     GetObjects(std::shared_ptr<sdbusplus::asio::connection> connection,
                std::function<void(ManagedObjectType& resp)>&& callbackFunc) :
-        dbusConnection(std::move(connection)),
-        callback(std::move(callbackFunc))
+        dbusConnection(std::move(connection)), callback(std::move(callbackFunc))
     {}
 
     //~GetObjects() = default;
