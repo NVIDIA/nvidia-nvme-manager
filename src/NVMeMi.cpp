@@ -27,7 +27,6 @@ NVMeMi::NVMeMi(boost::asio::io_context& io,
 
     mctpPath.erase();
 
-
     // only create one share worker for all drives
     auto& workerMap = getWorkerMap();
     auto res = workerMap.find(0);
@@ -335,13 +334,36 @@ void NVMeMi::miScanCtrl(std::function<void(const std::error_code&,
     try
     {
         post([self{shared_from_this()}, cb{std::move(cb)}]() {
-            int rc = nvme_mi_scan_ep(self->nvmeEP, true);
+            int rc = 0;
+            const int maxRetries = 3;
+            const int delayMs = 100;
+
+            for (int retry = 0; retry <= maxRetries; ++retry)
+            {
+                rc = nvme_mi_scan_ep(self->nvmeEP, true);
+                if (rc == 0)
+                {
+                    // Success, break out of retry loop
+                    break;
+                }
+
+                if (retry < maxRetries)
+                {
+                    lg2::info(
+                        "[addr:{ADDR}, eid:{EID}] scan attempt {RETRY} failed, retrying in {DELAY}ms",
+                        "ADDR", self->addr, "EID", static_cast<int>(self->eid),
+                        "RETRY", retry + 1, "DELAY", delayMs);
+                    std::this_thread::sleep_for(
+                        std::chrono::milliseconds(delayMs));
+                }
+            }
+
             if (rc < 0)
             {
                 lg2::error(
-                    "[addr:{ADDR}, eid:{EID}] fail to scan controllers:{ERR}",
+                    "[addr:{ADDR}, eid:{EID}] fail to scan controllers after {RETRIES} attempts:{ERR}",
                     "ADDR", self->addr, "EID", static_cast<int>(self->eid),
-                    "ERR", std::strerror(errno));
+                    "RETRIES", maxRetries + 1, "ERR", std::strerror(errno));
                 boost::asio::post(self->io, [cb{cb}, lastErrno{errno}]() {
                     cb(std::make_error_code(static_cast<std::errc>(lastErrno)),
                        {});
@@ -353,9 +375,9 @@ void NVMeMi::miScanCtrl(std::function<void(const std::error_code&,
                 std::string_view errMsg =
                     statusToString(static_cast<nvme_mi_resp_status>(rc));
                 lg2::error(
-                    "[addr:{ADDR}, eid:{EID}] fail to scan controllers: {MSG}",
+                    "[addr:{ADDR}, eid:{EID}] fail to scan controllers after {RETRIES} attempts: {MSG}",
                     "ADDR", self->addr, "EID", static_cast<int>(self->eid),
-                    "MSG", errMsg);
+                    "RETRIES", maxRetries + 1, "MSG", errMsg);
                 boost::asio::post(self->io, [cb{cb}]() {
                     cb(std::make_error_code(std::errc::bad_message), {});
                 });
