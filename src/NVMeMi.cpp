@@ -17,30 +17,15 @@ std::map<int, std::weak_ptr<NVMeMi::Worker>>& NVMeMi::getWorkerMap()
     return workerMap;
 }
 
-nvme_root_t& NVMeMi::getNVMeRoot()
-{
-    // libnvme-mi root service
-    static nvme_root_t nvmeRoot = nvme_mi_create_root(stderr, DEFAULT_LOGLEVEL);
-    return nvmeRoot;
-}
-
 NVMeMi::NVMeMi(boost::asio::io_context& io,
                const std::shared_ptr<sdbusplus::asio::connection>& conn,
-               std::vector<uint8_t> sockName, uint8_t eid) :
+               const std::vector<uint8_t>& addr, int net, uint8_t eid) :
     io(io), conn(conn), dbus(*conn), eid(eid)
 {
     // reset to unassigned nid/eid and endpoint
 
     mctpPath.erase();
 
-    // set update the worker thread
-    auto& nvmeRoot = getNVMeRoot();
-    if (nvmeRoot == nullptr)
-    {
-        throw std::runtime_error("invalid NVMe root");
-    }
-
-    addr.assign(sockName.begin() + 1, sockName.end());
 
     // only create one share worker for all drives
     auto& workerMap = getWorkerMap();
@@ -55,8 +40,14 @@ NVMeMi::NVMeMi(boost::asio::io_context& io,
         worker = res->second.lock();
     }
 
-    std::string sockNameStr(sockName.begin(), sockName.end());
-    nvmeEP = nvme_mi_open_libmctp(nvmeRoot, 0, sockNameStr.data(), eid);
+    nvmeRoot = nvme_mi_create_root(stderr, DEFAULT_LOGLEVEL);
+#ifdef INKERNEL_MCTP
+    (void)addr; // avoid unused variable warning
+    nvmeEP = nvme_mi_open_mctp(nvmeRoot, net, eid);
+#else
+    std::string sockNameStr(addr.begin(), addr.end());
+    nvmeEP = nvme_mi_open_libmctp(nvmeRoot, net, sockNameStr.data(), eid);
+#endif
     if (nvmeEP == nullptr)
     {
         nid = -1;
@@ -65,7 +56,7 @@ NVMeMi::NVMeMi(boost::asio::io_context& io,
         // here.
         nvmeEP = nullptr;
         auto str = std::to_string(nid) + ":" + std::to_string(eid);
-        lg2::error("[addr:{ADDR}] can't open MCTP endpoint {MSG}", "ADDR", addr,
+        lg2::error("[eid:{EID}] can't open MCTP endpoint {MSG}", "EID", eid,
                    "MSG", str);
     }
 }
@@ -745,6 +736,7 @@ void NVMeMi::adminGetLogPage(
                     nvme_smart_log* log = static_cast<nvme_smart_log*>(
                         static_cast<void*>(data.data()));
 
+                    std::this_thread::sleep_for(std::chrono::seconds(3));
                     constexpr int readLen = sizeof(nvme_smart_log) -
                                             sizeof(log->rsvd232);
                     rc = nvme_mi_admin_get_nsid_log(ctrl, true, lid, nsid,

@@ -1,6 +1,11 @@
 #pragma once
 #include <libnvme-mi.h>
 
+// Undefine the min macro to avoid conflicts with std::min
+#ifdef min
+#undef min
+#endif
+
 #include <functional>
 #include <memory>
 #include <span>

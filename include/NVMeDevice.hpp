@@ -68,8 +68,8 @@ class NVMeDevice :
     NVMeDevice(boost::asio::io_context& io,
                sdbusplus::asio::object_server& objectServer,
                std::shared_ptr<sdbusplus::asio::connection>& conn,
-               uint8_t /*eid*/, uint32_t /*bus*/,
-               const std::vector<uint8_t> /*addr*/&, const std::string& path);
+               uint8_t /*eid*/, uint32_t /*bus*/, int /*net*/,
+               const std::vector<uint8_t>& /*addr*/, const std::string& path);
     NVMeDevice(const NVMeDevice& other) = delete;
 
     NVMeDevice(NVMeDevice&& other) = delete;
@@ -189,6 +189,7 @@ class NVMeDevice :
     std::string objPath;
     uint8_t eid;
     uint32_t bus;
+    int net;
     uint8_t retry{1};
 
     // flag of no-deallocate modifies meida after sanitize(NODMMAS)

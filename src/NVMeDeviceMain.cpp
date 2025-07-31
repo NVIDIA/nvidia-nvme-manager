@@ -9,6 +9,12 @@
 #include <regex>
 #include <vector>
 
+#ifdef INKERNEL_MCTP
+using eid_t = uint8_t;
+#else
+using eid_t = size_t;
+#endif
+
 const constexpr char* mctpEpsPath = "/xyz/openbmc_project/mctp";
 
 std::unordered_map<uint8_t, std::shared_ptr<NVMeDevice>>& getDriveMap()
@@ -21,8 +27,10 @@ static void handleEmEndpoints(const ManagedObjectType& objData)
 {
     std::string form;
     std::string driveAssoc;
+    eid_t eid = 0;
     uint64_t bus = -1;
 
+    (void)eid; // avoid unused variable warning
     for (const auto& [path, data] : objData)
     {
         auto ep = data.find("xyz.openbmc_project.Inventory.Item.NVMe");
@@ -30,6 +38,7 @@ static void handleEmEndpoints(const ManagedObjectType& objData)
         {
             continue;
         }
+        (void)bus; // avoid unused variable warning
         ep = data.find("xyz.openbmc_project.Inventory.Decorator.I2CDevice");
         if (ep != data.end())
         {
@@ -40,6 +49,18 @@ static void handleEmEndpoints(const ManagedObjectType& objData)
                 continue;
             }
             bus = std::get<uint64_t>(findProp->second);
+        }
+
+        ep = data.find("xyz.openbmc_project.MCTP.Endpoint");
+        if (ep != data.end())
+        {
+            const Properties& prop = ep->second;
+            auto findProp = prop.find("EID");
+            if (findProp == prop.end())
+            {
+                continue;
+            }
+            eid = std::get<uint64_t>(findProp->second);
         }
         ep = data.find("xyz.openbmc_project.Inventory.Item.Drive");
         if (ep != data.end())
@@ -75,10 +96,14 @@ static void handleEmEndpoints(const ManagedObjectType& objData)
             }
         }
         auto& driveMap = getDriveMap();
-        for (const auto& [_, context] : driveMap)
+        for (const auto& [index, context] : driveMap)
         {
             // update location and formfactor by comparing bus number
+#ifdef INKERNEL_MCTP
+            if (index != eid)
+#else
             if (context->getI2CBus() != bus)
+#endif
             {
                 continue;
             }
@@ -111,7 +136,11 @@ void collectInventory(
     getter->getConfiguration(std::vector<std::string>{
         "xyz.openbmc_project.Inventory.Item.Drive",
         "xyz.openbmc_project.Inventory.Item.NVMe",
+#ifndef INKERNEL_MCTP
         "xyz.openbmc_project.Inventory.Decorator.I2CDevice",
+#else
+        "xyz.openbmc_project.MCTP.Endpoint",
+#endif
         "xyz.openbmc_project.Inventory.Decorator.LocationCode",
         "xyz.openbmc_project.Inventory.Decorator.Location",
         "xyz.openbmc_project.Association.Definitions",
@@ -126,8 +155,9 @@ static void handleMCTPEndpoints(
     for (const auto& [path, epData] : mctpEndpoints)
     {
         bool nvmeCap = false;
-        size_t eid = 0;
         std::vector<uint8_t> addr;
+        eid_t eid = 0;
+        uint32_t net = 0;
         auto ep = epData.find(NVMeDevice::mctpEpInterface);
         if (ep != epData.end())
         {
@@ -137,7 +167,13 @@ static void handleMCTPEndpoints(
             {
                 continue;
             }
-            eid = std::get<size_t>(findEid->second);
+            eid = std::get<eid_t>(findEid->second);
+
+            auto findNetworkId = prop.find("NetworkId");
+            if (findNetworkId != prop.end())
+            {
+                net = std::get<uint32_t>(findNetworkId->second);
+            }
 
             auto findTypes = prop.find("SupportedMessageTypes");
             if (findTypes == prop.end())
@@ -193,7 +229,8 @@ static void handleMCTPEndpoints(
             p += std::string(drivePrefix);
             p += std::to_string(eid);
             auto drivePtr = std::make_shared<NVMeDevice>(
-                io, objectServer, dbusConnection, eid, bus, std::move(addr), p);
+                io, objectServer, dbusConnection, eid, bus,
+                static_cast<int>(net), std::move(addr), p);
 
             // put drive object to map in order to implement drive removal.
             driveMap.emplace(eid, drivePtr);
@@ -216,10 +253,16 @@ void createDrives(boost::asio::io_context& io,
                             const ManagedObjectType& mctpEndpoints) {
         handleMCTPEndpoints(io, objectServer, dbusConnection, mctpEndpoints);
     });
+#ifdef INKERNEL_MCTP
+    getter->getConfiguration(
+        std::vector<std::string>{"xyz.openbmc_project.MCTP.Endpoint",
+                                 "au.com.codeconstruct.MCTP.Endpoint1"});
+#else
     getter->getConfiguration(std::vector<std::string>{
         "xyz.openbmc_project.MCTP.Endpoint",
         "xyz.openbmc_project.Common.UnixSocket",
         "xyz.openbmc_project.Inventory.Decorator.I2CDevice"});
+#endif
 }
 
 static void interfaceRemoved(sdbusplus::message::message& message)

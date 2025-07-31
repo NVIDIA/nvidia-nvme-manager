@@ -12,6 +12,9 @@ project(
     meson_version: '>=1.1.1',
 )
 
+# Get the inkernel_mctp option
+inkernel_mctp = get_option('inkernel_mctp')
+
 add_project_arguments(
     '-Wno-psabi',
     '-Wuninitialized',
@@ -25,6 +28,11 @@ add_project_arguments(
     '-DCONFIG_LIBMCTP',
     language: 'cpp',
 )
+
+# Add INKERNEL_MCTP define based on the option
+if inkernel_mctp
+    add_project_arguments('-DINKERNEL_MCTP', language: 'cpp')
+endif
 
 cpp = meson.get_compiler('cpp')
 

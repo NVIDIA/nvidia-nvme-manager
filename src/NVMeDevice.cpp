@@ -33,13 +33,13 @@ using Json = nlohmann::json;
 NVMeDevice::NVMeDevice(boost::asio::io_context& io,
                        sdbusplus::asio::object_server& objectServer,
                        std::shared_ptr<sdbusplus::asio::connection>& conn,
-                       uint8_t eid, uint32_t bus,
+                       uint8_t eid, uint32_t bus, int net,
                        const std::vector<uint8_t>& addr,
                        const std::string& path) :
     NvmeInterfaces(static_cast<sdbusplus::bus::bus&>(*conn), path.c_str(),
                    NvmeInterfaces::action::defer_emit),
     conn(conn), objServer(objectServer), scanTimer(io), objPath(path), eid(eid),
-    bus(bus)
+    bus(bus), net(net)
 {
     std::filesystem::path p(path);
 
@@ -48,7 +48,7 @@ NVMeDevice::NVMeDevice(boost::asio::io_context& io,
     // assume the drive is good and update Dbus properties at the first place.
     markFunctional(true);
 
-    nvmeIntf = NVMeIntf::create<NVMeMi>(io, conn, addr, eid);
+    nvmeIntf = NVMeIntf::create<NVMeMi>(io, conn, addr, net, eid);
     intf = std::get<std::shared_ptr<NVMeMiIntf>>(nvmeIntf.getInferface());
 }
 
@@ -594,8 +594,9 @@ void NVMeDevice::pollDrive()
             self->markFunctional((ss->nss & 0x20) != 0);
         });
 
+        // change the nsid to 0 for new version of libnvme
         miIntf->adminGetLogPage(
-            self->ctrl, NVME_LOG_LID_SMART, 0xFFFFFFFF, 0,
+            self->ctrl, NVME_LOG_LID_SMART, 0, 0,
             [self](const std::error_code& ec, std::span<uint8_t> smart) {
             if (ec)
             {

@@ -11,7 +11,7 @@ class NVMeMi : public NVMeMiIntf, public std::enable_shared_from_this<NVMeMi>
   public:
     NVMeMi(boost::asio::io_context& io,
            const std::shared_ptr<sdbusplus::asio::connection>& conn,
-           std::vector<uint8_t> sockName, uint8_t eid);
+           const std::vector<uint8_t>& addr, int net, uint8_t eid);
     ~NVMeMi() override;
 
     // Delete copy operations
@@ -79,8 +79,10 @@ class NVMeMi : public NVMeMiIntf, public std::enable_shared_from_this<NVMeMi>
 
     // mctp connection
     nvme_mi_ep_t nvmeEP;
+    nvme_root_t nvmeRoot;
 
-    int nid;
+    int net{0};
+    int nid{0};
     uint8_t eid{0};
     std::string addr;
     std::string mctpPath;
@@ -114,8 +116,6 @@ class NVMeMi : public NVMeMiIntf, public std::enable_shared_from_this<NVMeMi>
     // sequencialize the transactions but assigning individual worker thread to
     // each EP makes no sense.
     static std::map<int, std::weak_ptr<Worker>>& getWorkerMap();
-
-    static nvme_root_t& getNVMeRoot();
 
     std::shared_ptr<Worker> worker;
     void post(std::function<void(void)>&& func);
