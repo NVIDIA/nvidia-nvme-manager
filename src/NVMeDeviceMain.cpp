@@ -302,7 +302,7 @@ int main()
         boost::asio::io_context io;
         auto bus = std::make_shared<sdbusplus::asio::connection>(io);
         sdbusplus::asio::object_server objectServer(bus, true);
-        objectServer.add_manager("/xyz/openbmc_project/inventory/item/drive");
+        objectServer.add_manager("/xyz/openbmc_project/inventory/system/nvme");
 
         std::vector<std::unique_ptr<sdbusplus::bus::match::match>> matches;
 
@@ -349,13 +349,14 @@ int main()
 
         matches.emplace_back(std::move(emIfaceAddedMatch));
 
+        boost::asio::steady_timer debounceTimer(io);
         std::function<void(sdbusplus::message::message&)> eventHandler =
-            [&filterTimer, &io, &objectServer,
+            [&debounceTimer, &io, &objectServer,
              &bus](sdbusplus::message::message&) {
             // this implicitly cancels the timer
-            filterTimer.expires_after(std::chrono::seconds(1));
+            debounceTimer.expires_after(std::chrono::seconds(1));
 
-            filterTimer.async_wait([&](const boost::system::error_code& ec) {
+            debounceTimer.async_wait([&](const boost::system::error_code& ec) {
                 if (ec == boost::asio::error::operation_aborted)
                 {
                     return; // we're being canceled

@@ -182,39 +182,38 @@ class NVMeMiIntf
     virtual ~NVMeMiIntf() = default;
 
     virtual void adminIdentify(
-        nvme_mi_ctrl_t ctrl, nvme_identify_cns cns, uint32_t nsid,
-        uint16_t cntid, uint16_t readLength,
+        uint8_t eid, nvme_identify_cns cns, uint32_t nsid, uint16_t cntid,
+        uint16_t readLength,
         std::function<void(const std::error_code&, std::span<uint8_t>)>&&
             cb) = 0;
     virtual void adminGetLogPage(
-        nvme_mi_ctrl_t ctrl, nvme_cmd_get_log_lid lid, uint32_t nsid,
-        uint8_t lsp,
+        uint8_t eid, nvme_cmd_get_log_lid lid, uint32_t nsid, uint8_t lsp,
         std::function<void(const std::error_code&, std::span<uint8_t>)>&&
             cb) = 0;
-    virtual void adminFwCommit(nvme_mi_ctrl_t ctrl, nvme_fw_commit_ca action,
+    virtual void adminFwCommit(uint8_t eid, nvme_fw_commit_ca action,
                                uint8_t slot, bool bpid,
                                std::function<void(const std::error_code&,
                                                   nvme_status_field)>&& cb) = 0;
     virtual void adminSanitize(
-        nvme_mi_ctrl_t ctrl, nvme_sanitize_sanact sanact, uint8_t owpass,
+        uint8_t eid, nvme_sanitize_sanact sanact, uint8_t owpass,
         uint32_t owpattern,
         std::function<void(const std::error_code&, std::span<uint8_t>)>&&
             cb) = 0;
 
     virtual void adminSecuritySend(
-        nvme_mi_ctrl_t ctrl, uint8_t proto, uint16_t protoSpecific,
+        uint8_t eid, uint8_t proto, uint16_t protoSpecific,
         std::span<uint8_t> data,
         std::function<void(const std::error_code&, int nvmeStatus)>&& cb) = 0;
 
     virtual void adminSecurityReceive(
-        nvme_mi_ctrl_t ctrl, uint8_t proto, uint16_t protoSpecific,
+        uint8_t eid, uint8_t proto, uint16_t protoSpecific,
         uint32_t transferLength,
         std::function<void(const std::error_code&, int nvmeStatus,
                            const std::span<uint8_t> data)>&& cb) = 0;
 
     /**
      * adminXfer() -  Raw admin transfer interface.
-     * @ctrl: controller to send the admin command to
+     * @eid: endpoint ID to send the admin command to
      * @admin_req: request header
      * @data: request data payload
      * @timeout_ms: timeout in ms
@@ -242,7 +241,7 @@ class NVMeMiIntf
      * @ec will be returned on failure.
      */
     virtual void
-        adminXfer(nvme_mi_ctrl_t ctrl, const nvme_mi_admin_req_hdr& adminReq,
+        adminXfer(uint8_t eid, const nvme_mi_admin_req_hdr& adminReq,
                   std::span<uint8_t> data, unsigned int timeoutMs,
                   std::function<void(const std::error_code& ec,
                                      const nvme_mi_admin_resp_hdr& adminResp,

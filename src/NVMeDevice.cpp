@@ -214,7 +214,7 @@ inline uint32_t getCurrLinkSpeed(uint8_t speed, uint8_t lanes)
 void NVMeDevice::getDriveInfo()
 {
     getIntf()->adminIdentify(
-        ctrl, nvme_identify_cns::NVME_IDENTIFY_CNS_CTRL, NVME_NSID_NONE, 0,
+        eid, nvme_identify_cns::NVME_IDENTIFY_CNS_CTRL, NVME_NSID_NONE, 0,
         identifyRspLength,
         [self{shared_from_this()}](const std::error_code& ec,
                                    std::span<uint8_t> data) {
@@ -336,7 +336,6 @@ void NVMeDevice::initialize()
         self->presence = true;
         self->Item::present(true, true);
 
-        self->ctrl = ctrlList.back();
         self->getDriveInfo();
     });
 }
@@ -495,7 +494,7 @@ void NVMeDevice::pollDrive()
             self->inProgress)
         {
             miIntf->adminGetLogPage(
-                self->ctrl, NVME_LOG_LID_SANITIZE, 0, 0,
+                self->eid, NVME_LOG_LID_SANITIZE, 0, 0,
                 [self](const std::error_code& ec, std::span<uint8_t> status) {
                 if (ec)
                 {
@@ -596,7 +595,7 @@ void NVMeDevice::pollDrive()
 
         // change the nsid to 0 for new version of libnvme
         miIntf->adminGetLogPage(
-            self->ctrl, NVME_LOG_LID_SMART, 0, 0,
+            self->eid, NVME_LOG_LID_SMART, 0, 0,
             [self](const std::error_code& ec, std::span<uint8_t> smart) {
             if (ec)
             {
@@ -702,8 +701,7 @@ void NVMeDevice::erase(uint16_t overwritePasses, EraseMethod type)
     {
         uint32_t pattern = ~0x04030201;
         intf->adminSanitize(
-            ctrl, NVME_SANITIZE_SANACT_START_OVERWRITE, overwritePasses,
-            pattern,
+            eid, NVME_SANITIZE_SANACT_START_OVERWRITE, overwritePasses, pattern,
             [self{shared_from_this()},
              type](const std::error_code& ec,
                    __attribute__((unused)) std::span<uint8_t> status) {
@@ -720,7 +718,7 @@ void NVMeDevice::erase(uint16_t overwritePasses, EraseMethod type)
     if (type == EraseMethod::CryptoErase)
     {
         intf->adminSanitize(
-            ctrl, NVME_SANITIZE_SANACT_START_CRYPTO_ERASE, 0, 0,
+            eid, NVME_SANITIZE_SANACT_START_CRYPTO_ERASE, 0, 0,
             [self{shared_from_this()},
              type](const std::error_code& ec,
                    __attribute__((unused)) std::span<uint8_t> status) {
@@ -737,7 +735,7 @@ void NVMeDevice::erase(uint16_t overwritePasses, EraseMethod type)
     if (type == EraseMethod::BlockErase)
     {
         intf->adminSanitize(
-            ctrl, NVME_SANITIZE_SANACT_START_BLOCK_ERASE, 0, 0,
+            eid, NVME_SANITIZE_SANACT_START_BLOCK_ERASE, 0, 0,
             [self{shared_from_this()},
              type](const std::error_code& ec,
                    __attribute__((unused)) std::span<uint8_t> status) {

@@ -20,7 +20,8 @@ std::map<int, std::weak_ptr<NVMeMi::Worker>>& NVMeMi::getWorkerMap()
 NVMeMi::NVMeMi(boost::asio::io_context& io,
                const std::shared_ptr<sdbusplus::asio::connection>& conn,
                const std::vector<uint8_t>& addr, int net, uint8_t eid) :
-    io(io), conn(conn), dbus(*conn), eid(eid)
+    io(io), conn(conn), dbus(*conn), net(net), eid(eid),
+    addr(addr.begin(), addr.end())
 {
     // reset to unassigned nid/eid and endpoint
 
@@ -56,8 +57,9 @@ NVMeMi::NVMeMi(boost::asio::io_context& io,
         // here.
         nvmeEP = nullptr;
         auto str = std::to_string(nid) + ":" + std::to_string(eid);
-        lg2::error("[eid:{EID}] can't open MCTP endpoint {MSG}", "EID", eid,
-                   "MSG", str);
+        lg2::error("[addr:{ADDR}] can't open MCTP endpoint {MSG}", "ADDR",
+                   this->addr, "MSG", str);
+        return;
     }
 }
 
@@ -99,6 +101,17 @@ NVMeMi::Worker::~Worker()
 }
 NVMeMi::~NVMeMi() = default;
 
+nvme_mi_ctrl_t NVMeMi::getController(uint8_t eid)
+{
+    std::lock_guard<std::mutex> lock(controllersMtx);
+    auto it = controllers.find(eid);
+    if (it != controllers.end())
+    {
+        return it->second;
+    }
+    return nullptr;
+}
+
 void NVMeMi::Worker::post(std::function<void(void)>&& func)
 {
     if (!workerStop)
@@ -131,7 +144,7 @@ std::error_code NVMeMi::tryPost(std::function<void(void)>&& func)
     }
     catch (const std::runtime_error& e)
     {
-        lg2::error("[addr:{ADDR}, eid:{EID}] {MSG}", "ADDR", addr, "EID",
+        lg2::error("[addr:{ADDR}, eid:{EID}] {MSG}", "ADDR", this->addr, "EID",
                    static_cast<int>(eid), "MSG", e.what());
         return std::make_error_code(std::errc::no_such_device);
     }
@@ -144,7 +157,7 @@ void NVMeMi::miPCIePortInformation(
     if (nvmeEP == nullptr)
     {
         lg2::error("[addr:{ADDR}, eid:{EID}] vme endpoint is invalid", "ADDR",
-                   addr, "EID", static_cast<int>(eid));
+                   this->addr, "EID", static_cast<int>(eid));
 
         boost::asio::post(io, [cb{std::move(cb)}]() {
             cb(std::make_error_code(std::errc::no_such_device), nullptr);
@@ -232,7 +245,7 @@ void NVMeMi::miPCIePortInformation(
     }
     catch (const std::runtime_error& e)
     {
-        lg2::error("[addr:{ADDR}, eid:{EID}]  {MSG}", "ADDR", addr, "EID",
+        lg2::error("[addr:{ADDR}, eid:{EID}]  {MSG}", "ADDR", this->addr, "EID",
                    static_cast<int>(eid), "MSG", e.what());
         boost::asio::post(io, [cb{cb}]() {
             cb(std::make_error_code(std::errc::no_such_device), {});
@@ -248,7 +261,7 @@ void NVMeMi::miSubsystemHealthStatusPoll(
     if (nvmeEP == nullptr)
     {
         lg2::error("[addr:{ADDR}, eid:{EID}] nvme endpoint is invalid ", "ADDR",
-                   addr, "EID", static_cast<int>(eid));
+                   this->addr, "EID", static_cast<int>(eid));
         boost::asio::post(io, [cb{cb}]() {
             cb(std::make_error_code(std::errc::no_such_device), nullptr);
         });
@@ -354,6 +367,9 @@ void NVMeMi::miScanCtrl(std::function<void(const std::error_code&,
             nvme_mi_for_each_ctrl(self->nvmeEP, c)
             {
                 list.push_back(c);
+                // Store controller in the map using EID as key
+                std::lock_guard<std::mutex> lock(self->controllersMtx);
+                self->controllers[self->eid] = c;
             }
             boost::asio::post(
                 self->io, [cb{cb}, list{std::move(list)}]() { cb({}, list); });
@@ -371,7 +387,7 @@ void NVMeMi::miScanCtrl(std::function<void(const std::error_code&,
 }
 
 void NVMeMi::adminIdentify(
-    nvme_mi_ctrl_t ctrl, nvme_identify_cns cns, uint32_t nsid, uint16_t cntid,
+    uint8_t eid, nvme_identify_cns cns, uint32_t nsid, uint16_t cntid,
     uint16_t readLength,
     std::function<void(const std::error_code&, std::span<uint8_t>)>&& cb)
 {
@@ -384,29 +400,50 @@ void NVMeMi::adminIdentify(
         return;
     }
 
+    nvme_mi_ctrl_t ctrl = getController(eid);
+    if (ctrl == nullptr)
+    {
+        lg2::error("[eid:{EID}] controller not found", "EID",
+                   static_cast<int>(eid));
+        boost::asio::post(io, [cb{std::move(cb)}]() {
+            cb(std::make_error_code(std::errc::no_such_device), {});
+        });
+        return;
+    }
+
     lg2::debug("[eid:{EID}] identify cmd resp length: {RSPLEN}", "EID",
                static_cast<int>(eid), "RSPLEN",
                static_cast<unsigned int>(readLength));
 
     if ((readLength > 0) && (readLength < NVME_IDENTIFY_DATA_SIZE))
     {
-        NVMeMi::adminIdentifyPartial(ctrl, cns, nsid, cntid, readLength,
+        NVMeMi::adminIdentifyPartial(eid, cns, nsid, cntid, readLength,
                                      std::move(cb));
     }
     else
     {
-        NVMeMi::adminIdentifyFull(ctrl, cns, nsid, cntid, std::move(cb));
+        NVMeMi::adminIdentifyFull(eid, cns, nsid, cntid, std::move(cb));
     }
 }
 
 void NVMeMi::adminIdentifyFull(
-    nvme_mi_ctrl_t ctrl, nvme_identify_cns cns, uint32_t nsid, uint16_t cntid,
+    uint8_t eid, nvme_identify_cns cns, uint32_t nsid, uint16_t cntid,
     std::function<void(const std::error_code&, std::span<uint8_t>)>&& cb)
 {
     try
     {
-        post([ctrl, cns, nsid, cntid, self{shared_from_this()},
+        post([eid, cns, nsid, cntid, self{shared_from_this()},
               cb{std::move(cb)}]() {
+            nvme_mi_ctrl_t ctrl = self->getController(eid);
+            if (ctrl == nullptr)
+            {
+                lg2::error("[eid:{EID}] controller not found", "EID",
+                           static_cast<int>(eid));
+                boost::asio::post(self->io, [cb{cb}]() {
+                    cb(std::make_error_code(std::errc::no_such_device), {});
+                });
+                return;
+            }
             int rc = 0;
             std::vector<uint8_t> data;
 
@@ -470,14 +507,24 @@ void NVMeMi::adminIdentifyFull(
 }
 
 void NVMeMi::adminIdentifyPartial(
-    nvme_mi_ctrl_t ctrl, nvme_identify_cns cns, uint32_t nsid, uint16_t cntid,
+    uint8_t eid, nvme_identify_cns cns, uint32_t nsid, uint16_t cntid,
     uint16_t readLength,
     std::function<void(const std::error_code&, std::span<uint8_t>)>&& cb)
 {
     try
     {
-        post([ctrl, cns, nsid, cntid, readLength, self{shared_from_this()},
+        post([eid, cns, nsid, cntid, readLength, self{shared_from_this()},
               cb{std::move(cb)}]() {
+            nvme_mi_ctrl_t ctrl = self->getController(eid);
+            if (ctrl == nullptr)
+            {
+                lg2::error("[eid:{EID}] controller not found", "EID",
+                           static_cast<int>(eid));
+                boost::asio::post(self->io, [cb{cb}]() {
+                    cb(std::make_error_code(std::errc::no_such_device), {});
+                });
+                return;
+            }
             int rc = 0;
             std::vector<uint8_t> data;
             switch (cns)
@@ -503,7 +550,6 @@ void NVMeMi::adminIdentifyPartial(
             args.uuidx = NVME_UUID_NONE,
 
             rc = nvme_mi_admin_identify_partial(ctrl, &args, 0, data.size());
-
             if (rc < 0)
             {
                 lg2::error(
@@ -604,7 +650,7 @@ int getTelemetryLog(nvme_mi_ctrl_t ctrl, bool host, bool create,
 }
 
 void NVMeMi::adminSanitize(
-    nvme_mi_ctrl_t ctrl, nvme_sanitize_sanact sanact, uint8_t owpass,
+    uint8_t eid, nvme_sanitize_sanact sanact, uint8_t owpass,
     uint32_t owpattern,
     std::function<void(const std::error_code&, std::span<uint8_t>)>&& cb)
 {
@@ -618,8 +664,18 @@ void NVMeMi::adminSanitize(
     }
     try
     {
-        post([ctrl, sanact, owpass, owpattern, self{shared_from_this()},
+        post([eid, sanact, owpass, owpattern, self{shared_from_this()},
               cb{std::move(cb)}]() {
+            nvme_mi_ctrl_t ctrl = self->getController(eid);
+            if (ctrl == nullptr)
+            {
+                lg2::error("[eid:{EID}] controller not found", "EID",
+                           static_cast<int>(eid));
+                boost::asio::post(self->io, [cb{cb}]() {
+                    cb(std::make_error_code(std::errc::no_such_device), {});
+                });
+                return;
+            }
             int rc = 0;
             std::vector<uint8_t> data(8);
             struct nvme_sanitize_nvm_args args{};
@@ -680,7 +736,7 @@ void NVMeMi::adminSanitize(
 }
 
 void NVMeMi::adminGetLogPage(
-    nvme_mi_ctrl_t ctrl, nvme_cmd_get_log_lid lid, uint32_t nsid, uint8_t lsp,
+    uint8_t eid, nvme_cmd_get_log_lid lid, uint32_t nsid, uint8_t lsp,
     std::function<void(const std::error_code&, std::span<uint8_t>)>&& cb)
 {
     if (nvmeEP == nullptr)
@@ -695,8 +751,18 @@ void NVMeMi::adminGetLogPage(
 
     try
     {
-        post([ctrl, nsid, lid, lsp, self{shared_from_this()},
+        post([eid, lid, nsid, lsp, self{shared_from_this()},
               cb{std::move(cb)}]() {
+            nvme_mi_ctrl_t ctrl = self->getController(eid);
+            if (ctrl == nullptr)
+            {
+                lg2::error("[eid:{EID}] controller not found", "EID",
+                           static_cast<int>(eid));
+                boost::asio::post(self->io, [cb{cb}]() {
+                    cb(std::make_error_code(std::errc::no_such_device), {});
+                });
+                return;
+            }
             std::vector<uint8_t> data;
 
             int rc = 0;
@@ -957,8 +1023,8 @@ void NVMeMi::adminGetLogPage(
 }
 
 void NVMeMi::adminXfer(
-    nvme_mi_ctrl_t ctrl, const nvme_mi_admin_req_hdr& adminReq,
-    std::span<uint8_t> data, unsigned int timeoutMs,
+    uint8_t eid, const nvme_mi_admin_req_hdr& adminReq, std::span<uint8_t> data,
+    unsigned int timeoutMs,
     std::function<void(const std::error_code&, const nvme_mi_admin_resp_hdr&,
                        std::span<uint8_t>)>&& cb)
 {
@@ -979,8 +1045,18 @@ void NVMeMi::adminXfer(
 
         std::copy(data.begin(), data.end(),
                   req.begin() + sizeof(nvme_mi_admin_req_hdr));
-        post([ctrl, req{std::move(req)}, self{shared_from_this()}, timeoutMs,
+        post([eid, req{std::move(req)}, self{shared_from_this()}, timeoutMs,
               cb{std::move(cb)}]() mutable {
+            nvme_mi_ctrl_t ctrl = self->getController(eid);
+            if (ctrl == nullptr)
+            {
+                lg2::error("[eid:{EID}] controller not found", "EID",
+                           static_cast<int>(eid));
+                boost::asio::post(self->io, [cb{cb}]() {
+                    cb(std::make_error_code(std::errc::no_such_device), {}, {});
+                });
+                return;
+            }
             int rc = 0;
 
             // NOLINTNEXTLINE(bugprone-casting-through-void)
@@ -1051,7 +1127,7 @@ void NVMeMi::adminXfer(
 }
 
 void NVMeMi::adminFwCommit(
-    nvme_mi_ctrl_t ctrl, nvme_fw_commit_ca action, uint8_t slot, bool bpid,
+    uint8_t eid, nvme_fw_commit_ca action, uint8_t slot, bool bpid,
     std::function<void(const std::error_code&, nvme_status_field)>&& cb)
 {
     if (nvmeEP == nullptr)
@@ -1072,8 +1148,19 @@ void NVMeMi::adminFwCommit(
         args.action = action;
         args.slot = slot;
         args.bpid = bpid;
-        boost::asio::post(io, [ctrl, args, cb{std::move(cb)},
+        boost::asio::post(io, [eid, args, cb{std::move(cb)},
                                self{shared_from_this()}]() mutable {
+            nvme_mi_ctrl_t ctrl = self->getController(eid);
+            if (ctrl == nullptr)
+            {
+                lg2::error("[eid:{EID}] controller not found", "EID",
+                           static_cast<int>(eid));
+                boost::asio::post(self->io, [cb{cb}]() {
+                    cb(std::make_error_code(std::errc::no_such_device),
+                       nvme_status_field::NVME_SC_MASK);
+                });
+                return;
+            }
             int rc = nvme_mi_admin_fw_commit(ctrl, &args);
             if (rc < 0)
             {
@@ -1127,12 +1214,21 @@ void NVMeMi::adminFwCommit(
 }
 
 void NVMeMi::adminSecuritySend(
-    nvme_mi_ctrl_t ctrl, uint8_t proto, uint16_t protoSpecific,
-    std::span<uint8_t> data,
+    uint8_t eid, uint8_t proto, uint16_t protoSpecific, std::span<uint8_t> data,
     std::function<void(const std::error_code&, int nvmeStatus)>&& cb)
 {
     std::error_code postErr = tryPost(
-        [self{shared_from_this()}, ctrl, proto, protoSpecific, data, cb{cb}]() {
+        [self{shared_from_this()}, eid, proto, protoSpecific, data, cb{cb}]() {
+        nvme_mi_ctrl_t ctrl = self->getController(eid);
+        if (ctrl == nullptr)
+        {
+            lg2::error("[eid:{EID}] controller not found", "EID",
+                       static_cast<int>(eid));
+            boost::asio::post(self->io, [cb{cb}]() {
+                cb(std::make_error_code(std::errc::no_such_device), -1);
+            });
+            return;
+        }
         struct nvme_security_send_args args{};
         memset(&args, 0x0, sizeof(args));
         args.secp = proto;
@@ -1161,8 +1257,7 @@ void NVMeMi::adminSecuritySend(
 }
 
 void NVMeMi::adminSecurityReceive(
-    nvme_mi_ctrl_t ctrl, uint8_t proto, uint16_t protoSpecific,
-    uint32_t transferLength,
+    uint8_t eid, uint8_t proto, uint16_t protoSpecific, uint32_t transferLength,
     std::function<void(const std::error_code&, int nvmeStatus,
                        std::span<uint8_t> data)>&& cb)
 {
@@ -1173,8 +1268,18 @@ void NVMeMi::adminSecurityReceive(
     }
 
     std::error_code postErr =
-        tryPost([self{shared_from_this()}, ctrl, proto, protoSpecific,
+        tryPost([self{shared_from_this()}, eid, proto, protoSpecific,
                  transferLength, cb{cb}]() {
+        nvme_mi_ctrl_t ctrl = self->getController(eid);
+        if (ctrl == nullptr)
+        {
+            lg2::error("[eid:{EID}] controller not found", "EID",
+                       static_cast<int>(eid));
+            boost::asio::post(self->io, [cb{cb}]() {
+                cb(std::make_error_code(std::errc::no_such_device), -1, {});
+            });
+            return;
+        }
         std::vector<uint8_t> data(transferLength);
 
         struct nvme_security_receive_args args{};
