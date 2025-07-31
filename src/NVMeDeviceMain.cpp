@@ -27,10 +27,9 @@ static void handleEmEndpoints(const ManagedObjectType& objData)
 {
     std::string form;
     std::string driveAssoc;
-    eid_t eid = 0;
+    uint64_t eid = 0;
     uint64_t bus = -1;
 
-    (void)eid; // avoid unused variable warning
     for (const auto& [path, data] : objData)
     {
         auto ep = data.find("xyz.openbmc_project.Inventory.Item.NVMe");
@@ -98,12 +97,15 @@ static void handleEmEndpoints(const ManagedObjectType& objData)
         auto& driveMap = getDriveMap();
         for (const auto& [index, context] : driveMap)
         {
-            // update location and formfactor by comparing bus number
+            // update location and formfactor by comparing EID or bus number
+            bool shouldUpdate = false;
 #ifdef INKERNEL_MCTP
-            if (index != eid)
+            shouldUpdate = (index == eid);
 #else
-            if (context->getI2CBus() != bus)
+            (void)eid; // avoid unused variable warning
+            shouldUpdate = (context->getI2CBus() == bus);
 #endif
+            if (!shouldUpdate)
             {
                 continue;
             }
@@ -136,10 +138,9 @@ void collectInventory(
     getter->getConfiguration(std::vector<std::string>{
         "xyz.openbmc_project.Inventory.Item.Drive",
         "xyz.openbmc_project.Inventory.Item.NVMe",
+        "xyz.openbmc_project.MCTP.Endpoint",
 #ifndef INKERNEL_MCTP
         "xyz.openbmc_project.Inventory.Decorator.I2CDevice",
-#else
-        "xyz.openbmc_project.MCTP.Endpoint",
 #endif
         "xyz.openbmc_project.Inventory.Decorator.LocationCode",
         "xyz.openbmc_project.Inventory.Decorator.Location",
