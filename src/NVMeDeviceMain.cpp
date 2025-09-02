@@ -304,6 +304,7 @@ int main()
         auto bus = std::make_shared<sdbusplus::asio::connection>(io);
         sdbusplus::asio::object_server objectServer(bus, true);
         objectServer.add_manager("/xyz/openbmc_project/inventory/system/nvme");
+        objectServer.add_manager("/xyz/openbmc_project/software");
 
         std::vector<std::unique_ptr<sdbusplus::bus::match::match>> matches;
 

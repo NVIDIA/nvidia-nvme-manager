@@ -1,5 +1,6 @@
 #pragma once
 #include <NVMeMi.hpp>
+#include <SoftwareInventoryManager.hpp>
 #include <boost/asio/io_context.hpp>
 #include <boost/asio/steady_timer.hpp>
 #include <phosphor-logging/elog-errors.hpp>
@@ -144,6 +145,12 @@ class NVMeDevice :
     void updateDriveAssociations();
     void erase(uint16_t overwritePasses, EraseMethod eraseType) override;
 
+    // Software inventory methods
+    void createSoftwareInventory();
+    void updateSoftwareInventory();
+    std::shared_ptr<SoftwareInventory> getSoftwareInventory() const;
+    std::string getFirmwareVersion();
+
     bool backupDeviceFault(bool value) override
     {
         backupDeviceErr = value;
@@ -180,6 +187,8 @@ class NVMeDevice :
     NVMeIntf nvmeIntf;
     std::shared_ptr<NVMeMiIntf> intf;
     std::string driveIndex;
+    std::shared_ptr<SoftwareInventory> softwareInventory;
+    std::unique_ptr<SoftwareInventoryManager> softwareInventoryManager;
 
     AssociationList assocs;
     nvme_mi_ctrl_t ctrl{};

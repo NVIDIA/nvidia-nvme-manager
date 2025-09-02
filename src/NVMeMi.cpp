@@ -7,7 +7,9 @@
 #include <phosphor-logging/lg2.hpp>
 
 #include <cerrno>
+#include <iomanip> // Added for std::hex, std::setw, std::setfill
 #include <iostream>
+#include <sstream> // Added for std::ostringstream
 
 constexpr size_t maxNVMeMILength = 4096;
 
@@ -261,7 +263,7 @@ void NVMeMi::miSubsystemHealthStatusPoll(
     {
         lg2::error("[addr:{ADDR}, eid:{EID}] nvme endpoint is invalid ", "ADDR",
                    this->addr, "EID", static_cast<int>(eid));
-        boost::asio::post(io, [cb{cb}]() {
+        boost::asio::post(io, [cb{std::move(cb)}]() {
             cb(std::make_error_code(std::errc::no_such_device), nullptr);
         });
         return;
@@ -269,7 +271,7 @@ void NVMeMi::miSubsystemHealthStatusPoll(
 
     try
     {
-        post([self{shared_from_this()}, cb{cb}]() {
+        post([self{shared_from_this()}, cb{std::move(cb)}]() {
             nvme_mi_nvm_ss_health_status ssHealth{};
             auto rc = nvme_mi_mi_subsystem_health_status_poll(self->nvmeEP,
                                                               true, &ssHealth);
@@ -310,7 +312,7 @@ void NVMeMi::miSubsystemHealthStatusPoll(
     {
         lg2::error("[addr:{ADDR}, eid:{EID}] {MSG}", "ADDR", addr, "EID",
                    static_cast<int>(eid), "MSG", e.what());
-        boost::asio::post(io, [cb{std::move(cb)}]() {
+        boost::asio::post(io, [cb{cb}]() {
             cb(std::make_error_code(std::errc::no_such_device), {});
         });
         return;
@@ -1213,6 +1215,107 @@ void NVMeMi::adminFwCommit(
                         std::string_view errMsg = statusToString(
                             static_cast<nvme_mi_resp_status>(rc));
                         lg2::error("fail to nvme_mi_admin_fw_commit: {MSG} ",
+                                   "MSG", errMsg);
+                        boost::asio::post(self->io, [rc, cb{std::move(cb)}]() {
+                            cb(std::make_error_code(std::errc::bad_message),
+                               static_cast<nvme_status_field>(rc));
+                        });
+                }
+                return;
+            }
+        });
+    }
+    catch (const std::runtime_error& e)
+    {
+        lg2::error("[addr:{ADDR}, eid:{EID}] {MSG}", "ADDR", addr, "EID",
+                   static_cast<int>(eid), "MSG", e.what());
+        boost::asio::post(io, [cb{std::move(cb)}]() {
+            cb(std::make_error_code(std::errc::no_such_device),
+               nvme_status_field::NVME_SC_MASK);
+        });
+        return;
+    }
+}
+
+void NVMeMi::adminFwDownload(
+    uint8_t eid, uint32_t offset, uint32_t dataLen, std::span<uint8_t> data,
+    std::function<void(const std::error_code&, nvme_status_field)>&& cb)
+{
+    if (nvmeEP == nullptr)
+    {
+        lg2::error("[addr:{ADDR}, eid:{EID}] nvme endpoint is invalid", "ADDR",
+                   addr, "EID", static_cast<int>(eid));
+        boost::asio::post(io, [cb{std::move(cb)}]() {
+            cb(std::make_error_code(std::errc::no_such_device),
+               nvme_status_field::NVME_SC_MASK);
+        });
+        return;
+    }
+
+    if (data.size() != dataLen)
+    {
+        lg2::error(
+            "[addr:{ADDR}, eid:{EID}] data size mismatch: expected {EXPECTED}, got {ACTUAL}",
+            "ADDR", addr, "EID", static_cast<int>(eid), "EXPECTED", dataLen,
+            "ACTUAL", data.size());
+        boost::asio::post(io, [cb{std::move(cb)}]() {
+            cb(std::make_error_code(std::errc::invalid_argument),
+               nvme_status_field::NVME_SC_MASK);
+        });
+        return;
+    }
+
+    try
+    {
+        boost::asio::post(io, [eid, offset, dataLen, data, cb{std::move(cb)},
+                               self{shared_from_this()}]() mutable {
+            nvme_mi_ctrl_t ctrl = self->getController(eid);
+            if (ctrl == nullptr)
+            {
+                lg2::error("[eid:{EID}] controller not found", "EID",
+                           static_cast<int>(eid));
+                boost::asio::post(self->io, [cb{cb}]() {
+                    cb(std::make_error_code(std::errc::no_such_device),
+                       nvme_status_field::NVME_SC_MASK);
+                });
+                return;
+            }
+
+            nvme_fw_download_args args{};
+            memset(&args, 0, sizeof(args));
+            args.args_size = sizeof(args);
+            args.offset = offset;
+            args.data_len = dataLen;
+            args.data = data.data();
+
+            int rc = nvme_mi_admin_fw_download(ctrl, &args);
+            if (rc < 0)
+            {
+                lg2::error(
+                    "[addr:{ADDR}, eid:{EID}] fail to nvme_mi_admin_fw_download: {ERR}",
+                    "ADDR", self->addr, "EID", static_cast<int>(self->eid),
+                    "ERR", std::strerror(errno));
+                boost::asio::post(self->io,
+                                  [cb{std::move(cb)}, lastErrno{errno}]() {
+                    cb(std::make_error_code(static_cast<std::errc>(lastErrno)),
+                       nvme_status_field::NVME_SC_MASK);
+                });
+                return;
+            }
+
+            if (rc >= 0)
+            {
+                switch (rc & 0x7ff)
+                {
+                    case NVME_SC_SUCCESS:
+                        boost::asio::post(self->io, [rc, cb{std::move(cb)}]() {
+                            cb({}, static_cast<nvme_status_field>(rc));
+                        });
+                        break;
+                    default:
+                        std::string_view errMsg = statusToString(
+                            static_cast<nvme_mi_resp_status>(rc));
+                        lg2::error("fail to nvme_mi_admin_fw_download: {MSG} ",
                                    "MSG", errMsg);
                         boost::asio::post(self->io, [rc, cb{std::move(cb)}]() {
                             cb(std::make_error_code(std::errc::bad_message),

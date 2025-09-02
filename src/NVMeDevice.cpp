@@ -1,13 +1,16 @@
 #include <nvme-mi_config.h>
 
 #include <NVMeDevice.hpp>
+#include <SoftwareInventoryManager.hpp>
 #include <boost/multiprecision/cpp_int.hpp>
 #include <dbusutil.hpp>
 #include <nlohmann/json.hpp>
+#include <phosphor-logging/lg2.hpp>
 
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <span>
 
 const std::string driveFailureResolution{
     "Ensure all cables are properly and securely connected. Ensure all drives "
@@ -50,6 +53,9 @@ NVMeDevice::NVMeDevice(boost::asio::io_context& io,
 
     nvmeIntf = NVMeIntf::create<NVMeMi>(io, conn, addr, net, eid);
     intf = std::get<std::shared_ptr<NVMeMiIntf>>(nvmeIntf.getInferface());
+
+    softwareInventoryManager =
+        std::make_unique<SoftwareInventoryManager>(*conn);
 }
 
 inline Drive::DriveFormFactor getDriveFormFactor(const std::string& form)
@@ -277,6 +283,8 @@ void NVMeDevice::getDriveInfo()
         }
         self->SecureErase::sanitizeCapability(saniCap, true);
         self->setNodmmas(id->sanicap);
+
+        self->createSoftwareInventory();
 
         self->getDriveLink();
     });
@@ -749,4 +757,52 @@ void NVMeDevice::erase(uint16_t overwritePasses, EraseMethod type)
             self->updateSanitizeStatus(type);
         });
     }
+}
+
+void NVMeDevice::createSoftwareInventory()
+{
+    if (softwareInventory != nullptr)
+    {
+        return;
+    }
+
+    std::string manufacturer = Asset::manufacturer();
+    std::string model = Asset::model();
+    std::string serialNumber = Asset::serialNumber();
+    std::string partNumber = Asset::partNumber();
+    std::string firmwareVersion = Version::version();
+
+    // Create software inventory object using the member manager
+    softwareInventory = softwareInventoryManager->createNVMeSoftwareInventory(
+        objPath, manufacturer, model, serialNumber, partNumber,
+        firmwareVersion);
+}
+
+void NVMeDevice::updateSoftwareInventory()
+{
+    if (softwareInventory == nullptr)
+    {
+        createSoftwareInventory();
+        return;
+    }
+
+    // Update firmware version from the existing Version property
+    std::string firmwareVersion = Version::version();
+    softwareInventory->updateVersion(firmwareVersion);
+
+    // Update other device information from existing Asset properties
+    softwareInventory->updateManufacturer(Asset::manufacturer());
+    softwareInventory->updateModel(Asset::model());
+    softwareInventory->updateSerialNumber(Asset::serialNumber());
+    softwareInventory->updatePartNumber(Asset::partNumber());
+}
+
+std::shared_ptr<SoftwareInventory> NVMeDevice::getSoftwareInventory() const
+{
+    return softwareInventory;
+}
+
+std::string NVMeDevice::getFirmwareVersion()
+{
+    return Version::version();
 }

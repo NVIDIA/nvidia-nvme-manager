@@ -50,6 +50,11 @@ class NVMeMi : public NVMeMiIntf, public std::enable_shared_from_this<NVMeMi>
         std::function<void(const std::error_code&, nvme_status_field)>&& cb)
         override;
 
+    void adminFwDownload(
+        uint8_t eid, uint32_t offset, uint32_t dataLen, std::span<uint8_t> data,
+        std::function<void(const std::error_code&, nvme_status_field)>&& cb)
+        override;
+
     void adminXfer(uint8_t eid, const nvme_mi_admin_req_hdr& aadminReq,
                    std::span<uint8_t> data, unsigned int timeoutMs,
                    std::function<void(const std::error_code&,
