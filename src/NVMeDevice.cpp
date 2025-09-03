@@ -54,8 +54,10 @@ NVMeDevice::NVMeDevice(boost::asio::io_context& io,
     nvmeIntf = NVMeIntf::create<NVMeMi>(io, conn, addr, net, eid);
     intf = std::get<std::shared_ptr<NVMeMiIntf>>(nvmeIntf.getInferface());
 
+#ifdef FIRMWARE_INVENTORY
     softwareInventoryManager =
         std::make_unique<SoftwareInventoryManager>(*conn);
+#endif
 }
 
 inline Drive::DriveFormFactor getDriveFormFactor(const std::string& form)
@@ -284,7 +286,9 @@ void NVMeDevice::getDriveInfo()
         self->SecureErase::sanitizeCapability(saniCap, true);
         self->setNodmmas(id->sanicap);
 
+#ifdef FIRMWARE_INVENTORY
         self->createSoftwareInventory();
+#endif
 
         self->getDriveLink();
     });
@@ -759,6 +763,7 @@ void NVMeDevice::erase(uint16_t overwritePasses, EraseMethod type)
     }
 }
 
+#ifdef FIRMWARE_INVENTORY
 void NVMeDevice::createSoftwareInventory()
 {
     if (softwareInventory != nullptr)
@@ -806,3 +811,4 @@ std::string NVMeDevice::getFirmwareVersion()
 {
     return Version::version();
 }
+#endif

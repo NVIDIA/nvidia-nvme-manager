@@ -28,3 +28,9 @@ option(
     value: false,
     description: 'enable inkernel MCTP support',
 )
+option(
+    'firmware_inventory',
+    type: 'boolean',
+    value: false,
+    description: 'enable drive firmware inventory support',
+)
