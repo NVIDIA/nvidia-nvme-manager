@@ -85,3 +85,4 @@ default_deps = [
 subdir('include')
 subdir('service_files')
 subdir('src')
+subdir('tool')

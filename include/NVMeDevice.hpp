@@ -68,9 +68,9 @@ class NVMeDevice :
 
     NVMeDevice(boost::asio::io_context& io,
                sdbusplus::asio::object_server& objectServer,
-               std::shared_ptr<sdbusplus::asio::connection>& conn,
-               uint8_t /*eid*/, uint32_t /*bus*/, int /*net*/,
-               const std::vector<uint8_t>& /*addr*/, const std::string& path);
+               std::shared_ptr<sdbusplus::asio::connection>& conn, uint8_t eid,
+               uint32_t bus, int net, const std::vector<uint8_t>& addr,
+               const std::string& path);
     NVMeDevice(const NVMeDevice& other) = delete;
 
     NVMeDevice(NVMeDevice&& other) = delete;
