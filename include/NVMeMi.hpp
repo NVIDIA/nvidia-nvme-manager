@@ -84,7 +84,6 @@ class NVMeMi : public NVMeMiIntf, public std::enable_shared_from_this<NVMeMi>
 
     // mctp connection
     nvme_mi_ep_t nvmeEP;
-    nvme_root_t nvmeRoot;
 
     int net{0};
     int nid{0};
@@ -125,6 +124,8 @@ class NVMeMi : public NVMeMiIntf, public std::enable_shared_from_this<NVMeMi>
     // sequencialize the transactions but assigning individual worker thread to
     // each EP makes no sense.
     static std::map<int, std::weak_ptr<Worker>>& getWorkerMap();
+
+    static nvme_root_t& getNVMeRoot();
 
     std::shared_ptr<Worker> worker;
     void post(std::function<void(void)>&& func);

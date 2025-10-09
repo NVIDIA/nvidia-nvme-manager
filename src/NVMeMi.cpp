@@ -19,6 +19,13 @@ std::map<int, std::weak_ptr<NVMeMi::Worker>>& NVMeMi::getWorkerMap()
     return workerMap;
 }
 
+nvme_root_t& NVMeMi::getNVMeRoot()
+{
+    // libnvme-mi root service
+    static nvme_root_t nvmeRoot = nvme_mi_create_root(stderr, DEFAULT_LOGLEVEL);
+    return nvmeRoot;
+}
+
 NVMeMi::NVMeMi(boost::asio::io_context& io,
                const std::shared_ptr<sdbusplus::asio::connection>& conn,
                const std::vector<uint8_t>& addr, int net, uint8_t eid) :
@@ -28,6 +35,12 @@ NVMeMi::NVMeMi(boost::asio::io_context& io,
     // reset to unassigned nid/eid and endpoint
 
     mctpPath.erase();
+
+    auto& nvmeRoot = getNVMeRoot();
+    if (nvmeRoot == nullptr)
+    {
+        throw std::runtime_error("invalid NVMe root");
+    }
 
     // only create one share worker for all drives
     auto& workerMap = getWorkerMap();
@@ -42,7 +55,6 @@ NVMeMi::NVMeMi(boost::asio::io_context& io,
         worker = res->second.lock();
     }
 
-    nvmeRoot = nvme_mi_create_root(stderr, DEFAULT_LOGLEVEL);
 #ifdef INKERNEL_MCTP
     (void)addr; // avoid unused variable warning
     nvmeEP = nvme_mi_open_mctp(nvmeRoot, net, eid);
