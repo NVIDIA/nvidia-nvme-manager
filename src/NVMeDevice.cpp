@@ -1,13 +1,16 @@
 #include <nvme-mi_config.h>
 
 #include <NVMeDevice.hpp>
+#include <SoftwareInventoryManager.hpp>
 #include <boost/multiprecision/cpp_int.hpp>
 #include <dbusutil.hpp>
 #include <nlohmann/json.hpp>
+#include <phosphor-logging/lg2.hpp>
 
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <span>
 
 const std::string driveFailureResolution{
     "Ensure all cables are properly and securely connected. Ensure all drives "
@@ -33,13 +36,13 @@ using Json = nlohmann::json;
 NVMeDevice::NVMeDevice(boost::asio::io_context& io,
                        sdbusplus::asio::object_server& objectServer,
                        std::shared_ptr<sdbusplus::asio::connection>& conn,
-                       uint8_t eid, uint32_t bus,
+                       uint8_t eid, uint32_t bus, int net,
                        const std::vector<uint8_t>& addr,
                        const std::string& path) :
     NvmeInterfaces(static_cast<sdbusplus::bus::bus&>(*conn), path.c_str(),
                    NvmeInterfaces::action::defer_emit),
     conn(conn), objServer(objectServer), scanTimer(io), objPath(path), eid(eid),
-    bus(bus)
+    bus(bus), net(net)
 {
     std::filesystem::path p(path);
 
@@ -48,8 +51,13 @@ NVMeDevice::NVMeDevice(boost::asio::io_context& io,
     // assume the drive is good and update Dbus properties at the first place.
     markFunctional(true);
 
-    nvmeIntf = NVMeIntf::create<NVMeMi>(io, conn, addr, eid);
+    nvmeIntf = NVMeIntf::create<NVMeMi>(io, conn, addr, net, eid);
     intf = std::get<std::shared_ptr<NVMeMiIntf>>(nvmeIntf.getInferface());
+
+#ifdef FIRMWARE_INVENTORY
+    softwareInventoryManager =
+        std::make_unique<SoftwareInventoryManager>(*conn);
+#endif
 }
 
 inline Drive::DriveFormFactor getDriveFormFactor(const std::string& form)
@@ -214,7 +222,7 @@ inline uint32_t getCurrLinkSpeed(uint8_t speed, uint8_t lanes)
 void NVMeDevice::getDriveInfo()
 {
     getIntf()->adminIdentify(
-        ctrl, nvme_identify_cns::NVME_IDENTIFY_CNS_CTRL, NVME_NSID_NONE, 0,
+        eid, nvme_identify_cns::NVME_IDENTIFY_CNS_CTRL, NVME_NSID_NONE, 0,
         identifyRspLength,
         [self{shared_from_this()}](const std::error_code& ec,
                                    std::span<uint8_t> data) {
@@ -278,6 +286,10 @@ void NVMeDevice::getDriveInfo()
         self->SecureErase::sanitizeCapability(saniCap, true);
         self->setNodmmas(id->sanicap);
 
+#ifdef FIRMWARE_INVENTORY
+        self->createSoftwareInventory();
+#endif
+
         self->getDriveLink();
     });
 }
@@ -336,7 +348,6 @@ void NVMeDevice::initialize()
         self->presence = true;
         self->Item::present(true, true);
 
-        self->ctrl = ctrlList.back();
         self->getDriveInfo();
     });
 }
@@ -495,7 +506,7 @@ void NVMeDevice::pollDrive()
             self->inProgress)
         {
             miIntf->adminGetLogPage(
-                self->ctrl, NVME_LOG_LID_SANITIZE, 0, 0,
+                self->eid, NVME_LOG_LID_SANITIZE, 0, 0,
                 [self](const std::error_code& ec, std::span<uint8_t> status) {
                 if (ec)
                 {
@@ -594,8 +605,9 @@ void NVMeDevice::pollDrive()
             self->markFunctional((ss->nss & 0x20) != 0);
         });
 
+        // change the nsid to 0 for new version of libnvme
         miIntf->adminGetLogPage(
-            self->ctrl, NVME_LOG_LID_SMART, 0xFFFFFFFF, 0,
+            self->eid, NVME_LOG_LID_SMART, 0, 0,
             [self](const std::error_code& ec, std::span<uint8_t> smart) {
             if (ec)
             {
@@ -701,8 +713,7 @@ void NVMeDevice::erase(uint16_t overwritePasses, EraseMethod type)
     {
         uint32_t pattern = ~0x04030201;
         intf->adminSanitize(
-            ctrl, NVME_SANITIZE_SANACT_START_OVERWRITE, overwritePasses,
-            pattern,
+            eid, NVME_SANITIZE_SANACT_START_OVERWRITE, overwritePasses, pattern,
             [self{shared_from_this()},
              type](const std::error_code& ec,
                    __attribute__((unused)) std::span<uint8_t> status) {
@@ -719,7 +730,7 @@ void NVMeDevice::erase(uint16_t overwritePasses, EraseMethod type)
     if (type == EraseMethod::CryptoErase)
     {
         intf->adminSanitize(
-            ctrl, NVME_SANITIZE_SANACT_START_CRYPTO_ERASE, 0, 0,
+            eid, NVME_SANITIZE_SANACT_START_CRYPTO_ERASE, 0, 0,
             [self{shared_from_this()},
              type](const std::error_code& ec,
                    __attribute__((unused)) std::span<uint8_t> status) {
@@ -736,7 +747,7 @@ void NVMeDevice::erase(uint16_t overwritePasses, EraseMethod type)
     if (type == EraseMethod::BlockErase)
     {
         intf->adminSanitize(
-            ctrl, NVME_SANITIZE_SANACT_START_BLOCK_ERASE, 0, 0,
+            eid, NVME_SANITIZE_SANACT_START_BLOCK_ERASE, 0, 0,
             [self{shared_from_this()},
              type](const std::error_code& ec,
                    __attribute__((unused)) std::span<uint8_t> status) {
@@ -751,3 +762,53 @@ void NVMeDevice::erase(uint16_t overwritePasses, EraseMethod type)
         });
     }
 }
+
+#ifdef FIRMWARE_INVENTORY
+void NVMeDevice::createSoftwareInventory()
+{
+    if (softwareInventory != nullptr)
+    {
+        return;
+    }
+
+    std::string manufacturer = Asset::manufacturer();
+    std::string model = Asset::model();
+    std::string serialNumber = Asset::serialNumber();
+    std::string partNumber = Asset::partNumber();
+    std::string firmwareVersion = Version::version();
+
+    // Create software inventory object using the member manager
+    softwareInventory = softwareInventoryManager->createNVMeSoftwareInventory(
+        objPath, manufacturer, model, serialNumber, partNumber,
+        firmwareVersion);
+}
+
+void NVMeDevice::updateSoftwareInventory()
+{
+    if (softwareInventory == nullptr)
+    {
+        createSoftwareInventory();
+        return;
+    }
+
+    // Update firmware version from the existing Version property
+    std::string firmwareVersion = Version::version();
+    softwareInventory->updateVersion(firmwareVersion);
+
+    // Update other device information from existing Asset properties
+    softwareInventory->updateManufacturer(Asset::manufacturer());
+    softwareInventory->updateModel(Asset::model());
+    softwareInventory->updateSerialNumber(Asset::serialNumber());
+    softwareInventory->updatePartNumber(Asset::partNumber());
+}
+
+std::shared_ptr<SoftwareInventory> NVMeDevice::getSoftwareInventory() const
+{
+    return softwareInventory;
+}
+
+std::string NVMeDevice::getFirmwareVersion()
+{
+    return Version::version();
+}
+#endif

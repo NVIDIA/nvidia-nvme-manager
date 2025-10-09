@@ -11,7 +11,7 @@ class NVMeMi : public NVMeMiIntf, public std::enable_shared_from_this<NVMeMi>
   public:
     NVMeMi(boost::asio::io_context& io,
            const std::shared_ptr<sdbusplus::asio::connection>& conn,
-           std::vector<uint8_t> sockName, uint8_t eid);
+           const std::vector<uint8_t>& addr, int net, uint8_t eid);
     ~NVMeMi() override;
 
     // Delete copy operations
@@ -31,38 +31,43 @@ class NVMeMi : public NVMeMiIntf, public std::enable_shared_from_this<NVMeMi>
     void miScanCtrl(std::function<void(const std::error_code&,
                                        const std::vector<nvme_mi_ctrl_t>&)>
                         cb) override;
-    void adminIdentify(nvme_mi_ctrl_t ctrl, nvme_identify_cns cns,
-                       uint32_t nsid, uint16_t cntid, uint16_t readLength,
+    void adminIdentify(uint8_t eid, nvme_identify_cns cns, uint32_t nsid,
+                       uint16_t cntid, uint16_t readLength,
                        std::function<void(const std::error_code&,
                                           std::span<uint8_t>)>&& cb) override;
-    void adminGetLogPage(nvme_mi_ctrl_t ctrl, nvme_cmd_get_log_lid lid,
-                         uint32_t nsid, uint8_t lsp,
-                         std::function<void(const std::error_code&,
-                                            std::span<uint8_t>)>&& cb) override;
+    void adminGetLogPage(
+        uint8_t eid, nvme_cmd_get_log_lid lid, uint32_t nsid, uint8_t lsp,
+        std::function<void(const std::error_code&, std::span<uint8_t>)>&& cb)
+        override;
 
-    void adminSanitize(nvme_mi_ctrl_t ctrl, nvme_sanitize_sanact sanact,
-                       uint8_t owpass, uint32_t owpattern,
+    void adminSanitize(uint8_t eid, nvme_sanitize_sanact sanact, uint8_t owpass,
+                       uint32_t owpattern,
                        std::function<void(const std::error_code&,
                                           std::span<uint8_t>)>&& cb) override;
 
     void adminFwCommit(
-        nvme_mi_ctrl_t ctrl, nvme_fw_commit_ca action, uint8_t slot, bool bpid,
+        uint8_t eid, nvme_fw_commit_ca action, uint8_t slot, bool bpid,
         std::function<void(const std::error_code&, nvme_status_field)>&& cb)
         override;
 
-    void adminXfer(nvme_mi_ctrl_t ctrl, const nvme_mi_admin_req_hdr& aadminReq,
+    void adminFwDownload(
+        uint8_t eid, uint32_t offset, uint32_t dataLen, std::span<uint8_t> data,
+        std::function<void(const std::error_code&, nvme_status_field)>&& cb)
+        override;
+
+    void adminXfer(uint8_t eid, const nvme_mi_admin_req_hdr& aadminReq,
                    std::span<uint8_t> data, unsigned int timeoutMs,
                    std::function<void(const std::error_code&,
                                       const nvme_mi_admin_resp_hdr&,
                                       std::span<uint8_t>)>&& cb) override;
 
-    void adminSecuritySend(nvme_mi_ctrl_t ctrl, uint8_t proto,
-                           uint16_t protoSpecific, std::span<uint8_t> data,
+    void adminSecuritySend(uint8_t eid, uint8_t proto, uint16_t protoSpecific,
+                           std::span<uint8_t> data,
                            std::function<void(const std::error_code&,
                                               int nnnvmeStatus)>&& cb) override;
 
     void adminSecurityReceive(
-        nvme_mi_ctrl_t ctrl, uint8_t proto, uint16_t protoSpecific,
+        uint8_t eid, uint8_t proto, uint16_t protoSpecific,
         uint32_t transferLength,
         std::function<void(const std::error_code&, int nvmeStatus,
                            std::span<uint8_t> data)>&& cb) override;
@@ -80,10 +85,15 @@ class NVMeMi : public NVMeMiIntf, public std::enable_shared_from_this<NVMeMi>
     // mctp connection
     nvme_mi_ep_t nvmeEP;
 
-    int nid;
+    int net{0};
+    int nid{0};
     uint8_t eid{0};
     std::string addr;
     std::string mctpPath;
+
+    // Map to store controllers by EID
+    std::map<uint8_t, nvme_mi_ctrl_t> controllers;
+    std::mutex controllersMtx;
 
     std::mutex mctpMtx;
 
@@ -123,12 +133,13 @@ class NVMeMi : public NVMeMiIntf, public std::enable_shared_from_this<NVMeMi>
     std::error_code tryPost(std::function<void(void)>&& func);
 
     void adminIdentifyFull(
-        nvme_mi_ctrl_t ctrl, nvme_identify_cns cns, uint32_t nsid,
-        uint16_t cntid,
+        uint8_t eid, nvme_identify_cns cns, uint32_t nsid, uint16_t cntid,
         std::function<void(const std::error_code&, std::span<uint8_t>)>&& cb);
 
     void adminIdentifyPartial(
-        nvme_mi_ctrl_t ctrl, nvme_identify_cns cns, uint32_t nsid,
-        uint16_t cntid, uint16_t readLength,
+        uint8_t eid, nvme_identify_cns cns, uint32_t nsid, uint16_t cntid,
+        uint16_t readLength,
         std::function<void(const std::error_code&, std::span<uint8_t>)>&& cb);
+
+    nvme_mi_ctrl_t getController(uint8_t eid);
 };

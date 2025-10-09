@@ -1,11 +1,7 @@
-nvme_srcs = files('NVMeDevice.cpp', 'NVMeDeviceMain.cpp', 'NVMeMi.cpp')
-
-nvme_deps = [default_deps, threads]
-
 executable(
-    'nvme',
-    sources: nvme_srcs,
-    dependencies: nvme_deps,
+    'nvme-fw-update',
+    sources: 'NVMeFwUpdate.cpp',
+    dependencies: default_deps,
     implicit_include_directories: false,
     include_directories: '../include',
     cpp_args: [
@@ -17,4 +13,3 @@ executable(
     link_args: '-Wl,--gc-sections',
     install: true,
 )
-

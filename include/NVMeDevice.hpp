@@ -1,5 +1,6 @@
 #pragma once
 #include <NVMeMi.hpp>
+#include <SoftwareInventoryManager.hpp>
 #include <boost/asio/io_context.hpp>
 #include <boost/asio/steady_timer.hpp>
 #include <phosphor-logging/elog-errors.hpp>
@@ -67,9 +68,9 @@ class NVMeDevice :
 
     NVMeDevice(boost::asio::io_context& io,
                sdbusplus::asio::object_server& objectServer,
-               std::shared_ptr<sdbusplus::asio::connection>& conn,
-               uint8_t /*eid*/, uint32_t /*bus*/,
-               const std::vector<uint8_t> /*addr*/&, const std::string& path);
+               std::shared_ptr<sdbusplus::asio::connection>& conn, uint8_t eid,
+               uint32_t bus, int net, const std::vector<uint8_t>& addr,
+               const std::string& path);
     NVMeDevice(const NVMeDevice& other) = delete;
 
     NVMeDevice(NVMeDevice&& other) = delete;
@@ -144,6 +145,12 @@ class NVMeDevice :
     void updateDriveAssociations();
     void erase(uint16_t overwritePasses, EraseMethod eraseType) override;
 
+    // Software inventory methods
+    void createSoftwareInventory();
+    void updateSoftwareInventory();
+    std::shared_ptr<SoftwareInventory> getSoftwareInventory() const;
+    std::string getFirmwareVersion();
+
     bool backupDeviceFault(bool value) override
     {
         backupDeviceErr = value;
@@ -180,6 +187,8 @@ class NVMeDevice :
     NVMeIntf nvmeIntf;
     std::shared_ptr<NVMeMiIntf> intf;
     std::string driveIndex;
+    std::shared_ptr<SoftwareInventory> softwareInventory;
+    std::unique_ptr<SoftwareInventoryManager> softwareInventoryManager;
 
     AssociationList assocs;
     nvme_mi_ctrl_t ctrl{};
@@ -189,6 +198,7 @@ class NVMeDevice :
     std::string objPath;
     uint8_t eid;
     uint32_t bus;
+    int net;
     uint8_t retry{1};
 
     // flag of no-deallocate modifies meida after sanitize(NODMMAS)
