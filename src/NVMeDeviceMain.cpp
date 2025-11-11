@@ -15,7 +15,11 @@ using eid_t = uint8_t;
 using eid_t = size_t;
 #endif
 
+#ifdef INKERNEL_MCTP
+const constexpr char* mctpEpsPath = "/au/com/codeconstruct/mctp1";
+#else
 const constexpr char* mctpEpsPath = "/xyz/openbmc_project/mctp";
+#endif
 
 std::unordered_map<uint8_t, std::shared_ptr<NVMeDevice>>& getDriveMap()
 {
