@@ -1,4 +1,4 @@
-#NVMe Device Manager for OpenBMC
+# NVMe Device Manager for OpenBMC
 
 A D-Bus based NVMe device management daemon for OpenBMC systems. This
 service discovers, monitors, and manages NVMe drives through the NVMe
