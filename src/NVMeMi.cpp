@@ -643,9 +643,8 @@ int getTelemetryLog(nvme_mi_ctrl_t ctrl, bool host, bool create,
 {
     int rc = 0;
     data.resize(sizeof(nvme_telemetry_log));
-    // NOLINTNEXTLINE(bugprone-casting-through-void)
-    auto& log =
-        *static_cast<nvme_telemetry_log*>(static_cast<void*>(data.data()));
+    // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
+    auto& log = *reinterpret_cast<nvme_telemetry_log*>(data.data());
     auto func = host ? nvmeMiAdminGetLogTelemetryHostRae
                      : nvme_mi_admin_get_log_telemetry_ctrl;
 
@@ -722,9 +721,8 @@ void NVMeMi::adminSanitize(
             args.owpass = owpass;
             args.nodas = true;
             args.ovrpat = owpattern;
-            // NOLINTNEXTLINE(bugprone-casting-through-void)
-            args.result =
-                static_cast<uint32_t*>(static_cast<void*>(data.data()));
+            // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
+            args.result = reinterpret_cast<uint32_t*>(data.data());
 
             rc = nvme_mi_admin_sanitize_nvm(ctrl, &args);
             if (rc < 0)
@@ -815,10 +813,9 @@ void NVMeMi::adminGetLogPage(
                     static constexpr int num = nvme_mi_xfer_size /
                                                sizeof(nvme_error_log_page);
                     // NOLINTEND(readability-identifier-naming)
-                    // NOLINTNEXTLINE(bugprone-casting-through-void)
                     nvme_error_log_page* log =
-                        static_cast<nvme_error_log_page*>(
-                            static_cast<void*>(data.data()));
+                        // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
+                        reinterpret_cast<nvme_error_log_page*>(data.data());
 
                     rc = nvme_mi_admin_get_log_error(ctrl, num, false, log);
                     if (rc != 0)
@@ -834,9 +831,9 @@ void NVMeMi::adminGetLogPage(
                 case NVME_LOG_LID_SMART:
                 {
                     data.resize(sizeof(nvme_smart_log));
-                    // NOLINTNEXTLINE(bugprone-casting-through-void)
-                    nvme_smart_log* log = static_cast<nvme_smart_log*>(
-                        static_cast<void*>(data.data()));
+                    nvme_smart_log* log =
+                        // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
+                        reinterpret_cast<nvme_smart_log*>(data.data());
 
                     std::this_thread::sleep_for(std::chrono::seconds(3));
                     constexpr int readLen = sizeof(nvme_smart_log) -
@@ -856,9 +853,9 @@ void NVMeMi::adminGetLogPage(
                 case NVME_LOG_LID_FW_SLOT:
                 {
                     data.resize(sizeof(nvme_firmware_slot));
-                    // NOLINTNEXTLINE(bugprone-casting-through-void)
-                    nvme_firmware_slot* log = static_cast<nvme_firmware_slot*>(
-                        static_cast<void*>(data.data()));
+                    nvme_firmware_slot* log =
+                        // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
+                        reinterpret_cast<nvme_firmware_slot*>(data.data());
                     rc = nvme_mi_admin_get_log_fw_slot(ctrl, false, log);
                     if (rc != 0)
                     {
@@ -873,10 +870,9 @@ void NVMeMi::adminGetLogPage(
                 case NVME_LOG_LID_CMD_EFFECTS:
                 {
                     data.resize(sizeof(nvme_cmd_effects_log));
-                    // NOLINTNEXTLINE(bugprone-casting-through-void)
                     nvme_cmd_effects_log* log =
-                        static_cast<nvme_cmd_effects_log*>(
-                            static_cast<void*>(data.data()));
+                        // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
+                        reinterpret_cast<nvme_cmd_effects_log*>(data.data());
 
                     // nvme rev 1.3 doesn't support csi,
                     // set to default csi = NVME_CSI_NVM
@@ -895,9 +891,9 @@ void NVMeMi::adminGetLogPage(
                 case NVME_LOG_LID_DEVICE_SELF_TEST:
                 {
                     data.resize(sizeof(nvme_self_test_log));
-                    // NOLINTNEXTLINE(bugprone-casting-through-void)
-                    nvme_self_test_log* log = static_cast<nvme_self_test_log*>(
-                        static_cast<void*>(data.data()));
+                    nvme_self_test_log* log =
+                        // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
+                        reinterpret_cast<nvme_self_test_log*>(data.data());
                     rc = nvme_mi_admin_get_log_device_self_test(ctrl, log);
                     if (rc != 0)
                     {
@@ -912,9 +908,8 @@ void NVMeMi::adminGetLogPage(
                 case NVME_LOG_LID_CHANGED_NS:
                 {
                     data.resize(sizeof(nvme_ns_list));
-                    // NOLINTNEXTLINE(bugprone-casting-through-void)
-                    auto* log = static_cast<nvme_ns_list*>(
-                        static_cast<void*>(data.data()));
+                    // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
+                    auto* log = reinterpret_cast<nvme_ns_list*>(data.data());
                     rc = nvme_mi_admin_get_log_changed_ns_list(ctrl, false,
                                                                log);
                     if (rc != 0)
@@ -966,10 +961,10 @@ void NVMeMi::adminGetLogPage(
                 case NVME_LOG_LID_RESERVATION:
                 {
                     data.resize(sizeof(nvme_resv_notification_log));
-                    // NOLINTNEXTLINE(bugprone-casting-through-void)
                     nvme_resv_notification_log* log =
-                        static_cast<nvme_resv_notification_log*>(
-                            static_cast<void*>(data.data()));
+                        // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
+                        reinterpret_cast<nvme_resv_notification_log*>(
+                            data.data());
 
                     int rc = nvme_mi_admin_get_log_reservation(ctrl, false,
                                                                log);
@@ -986,10 +981,9 @@ void NVMeMi::adminGetLogPage(
                 case NVME_LOG_LID_SANITIZE:
                 {
                     data.resize(sizeof(nvme_sanitize_log_page));
-                    // NOLINTNEXTLINE(bugprone-casting-through-void)
                     nvme_sanitize_log_page* log =
-                        static_cast<nvme_sanitize_log_page*>(
-                            static_cast<void*>(data.data()));
+                        // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
+                        reinterpret_cast<nvme_sanitize_log_page*>(data.data());
 
                     int rc = nvme_mi_admin_get_log_sanitize(ctrl, false, log);
                     if (rc != 0)
@@ -1095,10 +1089,9 @@ void NVMeMi::adminXfer(
             }
             int rc = 0;
 
-            // NOLINTNEXTLINE(bugprone-casting-through-void)
             nvme_mi_admin_req_hdr* reqHeader =
-                static_cast<nvme_mi_admin_req_hdr*>(
-                    static_cast<void*>(req.data()));
+                // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
+                reinterpret_cast<nvme_mi_admin_req_hdr*>(req.data());
 
             size_t respDataSize =
                 boost::endian::little_to_native<size_t>(reqHeader->dlen);
@@ -1106,10 +1099,9 @@ void NVMeMi::adminXfer(
                 boost::endian::little_to_native<off_t>(reqHeader->doff);
             size_t bufSize = sizeof(nvme_mi_admin_resp_hdr) + respDataSize;
             std::vector<uint8_t> buf(bufSize);
-            // NOLINTNEXTLINE(bugprone-casting-through-void)
             nvme_mi_admin_resp_hdr* respHeader =
-                static_cast<nvme_mi_admin_resp_hdr*>(
-                    static_cast<void*>(buf.data()));
+                // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
+                reinterpret_cast<nvme_mi_admin_resp_hdr*>(buf.data());
 
             // set timeout
             unsigned timeout = nvme_mi_ep_get_timeout(self->nvmeEP);
@@ -1143,10 +1135,8 @@ void NVMeMi::adminXfer(
                 self->io, [cb{std::move(cb)}, data{std::move(buf)}]() mutable {
                 std::span<uint8_t> span(
                     data.begin() + sizeof(nvme_mi_admin_resp_hdr), data.end());
-                // NOLINTNEXTLINE(bugprone-casting-through-void)
-                cb({},
-                   *static_cast<nvme_mi_admin_resp_hdr*>(
-                       static_cast<void*>(data.data())),
+                // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
+                cb({}, *reinterpret_cast<nvme_mi_admin_resp_hdr*>(data.data()),
                    span);
             });
         });

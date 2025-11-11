@@ -226,7 +226,7 @@ static void handleMCTPEndpoints(
 
         auto& driveMap = getDriveMap();
         addr.push_back(0);
-        if (driveMap.find(eid) == driveMap.end())
+        if (!driveMap.contains(eid))
         {
             lg2::info("Drive is added on EID: {EID}", "EID", eid);
 
