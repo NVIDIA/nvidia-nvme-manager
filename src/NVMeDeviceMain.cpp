@@ -142,8 +142,9 @@ void collectInventory(
     getter->getConfiguration(std::vector<std::string>{
         "xyz.openbmc_project.Inventory.Item.Drive",
         "xyz.openbmc_project.Inventory.Item.NVMe",
+#ifdef INKERNEL_MCTP
         "xyz.openbmc_project.MCTP.Endpoint",
-#ifndef INKERNEL_MCTP
+#else
         "xyz.openbmc_project.Inventory.Decorator.I2CDevice",
 #endif
         "xyz.openbmc_project.Inventory.Decorator.LocationCode",
@@ -226,7 +227,7 @@ static void handleMCTPEndpoints(
 
         auto& driveMap = getDriveMap();
         addr.push_back(0);
-        if (driveMap.find(eid) == driveMap.end())
+        if (!driveMap.contains(eid))
         {
             lg2::info("Drive is added on EID: {EID}", "EID", eid);
 

@@ -246,9 +246,8 @@ void NVMeDevice::getDriveInfo()
             }
             return;
         }
-        // NOLINTNEXTLINE(bugprone-casting-through-void)
-        auto* id =
-            static_cast<struct nvme_id_ctrl*>(static_cast<void*>(data.data()));
+        // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
+        auto* id = reinterpret_cast<struct nvme_id_ctrl*>(data.data());
 
         self->Asset::manufacturer(NVMeDevice::getManufacture(id->vid), true);
         auto sn = NVMeDevice::stripString(std::span<const char, 20>(id->sn));
@@ -516,9 +515,9 @@ void NVMeDevice::pollDrive()
                     return;
                 }
 
-                // NOLINTNEXTLINE(bugprone-casting-through-void)
-                auto* log = static_cast<struct nvme_sanitize_log_page*>(
-                    static_cast<void*>(status.data()));
+                // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
+                auto* log = reinterpret_cast<struct nvme_sanitize_log_page*>(
+                    status.data());
 
                 uint8_t res = log->sstat & NVME_SANITIZE_SSTAT_STATUS_MASK;
                 if (res == NVME_SANITIZE_SSTAT_STATUS_COMPLETE_SUCCESS ||
@@ -618,9 +617,8 @@ void NVMeDevice::pollDrive()
                 return;
             }
 
-            // NOLINTNEXTLINE(bugprone-casting-through-void)
-            auto* log = static_cast<struct nvme_smart_log*>(
-                static_cast<void*>(smart.data()));
+            // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
+            auto* log = reinterpret_cast<struct nvme_smart_log*>(smart.data());
 
             auto cw = log->critical_warning;
 

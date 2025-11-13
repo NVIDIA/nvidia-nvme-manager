@@ -88,8 +88,7 @@ class SoftwareInventoryManager
     // Check if software inventory exists for a device
     bool hasSoftwareInventory(const std::string& devicePath)
     {
-        return softwareInventoryMap.find(devicePath) !=
-               softwareInventoryMap.end();
+        return softwareInventoryMap.contains(devicePath);
     }
 
   private:

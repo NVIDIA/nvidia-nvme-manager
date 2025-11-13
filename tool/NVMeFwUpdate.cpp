@@ -287,8 +287,8 @@ bool updateFirmwareForDevice(
     while (file.good() && offset < fileSize)
     {
         // Read chunk from file
-        file.read(static_cast<char*>(static_cast<void*>(buffer.data())),
-                  firmwareDownloadSize);
+        // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
+        file.read(reinterpret_cast<char*>(buffer.data()), firmwareDownloadSize);
         size_t bytesRead = file.gcount();
 
         if (bytesRead == 0)
