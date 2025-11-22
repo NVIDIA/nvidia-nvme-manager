@@ -161,7 +161,7 @@ bool updateFirmwareForDevice(
     const std::shared_ptr<sdbusplus::asio::connection>& conn,
     const std::string& objectPathPrefix)
 {
-    std::string deviceInfo = "NVMe_SSD_" + std::to_string(eid);
+    std::string deviceInfo = PLATFORM_DRIVE_PREFIX + std::to_string(eid);
     std::string objectPath = objectPathPrefix + std::to_string(eid);
     nvme_mi_ep_t ep = nullptr;
 

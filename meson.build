@@ -18,6 +18,9 @@ inkernel_mctp = get_option('inkernel_mctp')
 # Get the firmware inventory option
 firmware_inventory = get_option('firmware_inventory')
 
+# Get the platform drive prefix
+platform_drive_prefix = get_option('platform_drive_prefix')
+
 add_project_arguments(
     '-Wno-psabi',
     '-Wuninitialized',
@@ -41,6 +44,12 @@ endif
 if firmware_inventory
     add_project_arguments('-DFIRMWARE_INVENTORY', language: 'cpp')
 endif
+
+# Add PLATFORM_DRIVE_PREFIX define
+add_project_arguments(
+    '-DPLATFORM_DRIVE_PREFIX="' + platform_drive_prefix + '"',
+    language: 'cpp',
+)
 
 cpp = meson.get_compiler('cpp')
 
