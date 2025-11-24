@@ -54,7 +54,7 @@ void logTransferFailed(const std::shared_ptr<sdbusplus::asio::connection>& conn,
         "Check network connectivity and device availability. "
         "Ensure the firmware file is accessible and not corrupted.";
     createLogEntry(conn, transferFailed, Level::Error, deviceInfo, version,
-                   resolution, objectPath, "Update");
+                   resolution, objectPath, "FWUpdate");
 }
 
 void logTransferringToComponent(
@@ -63,7 +63,7 @@ void logTransferringToComponent(
     const std::string& objectPath)
 {
     createLogEntry(conn, transferringToComponent, Level::Informational,
-                   deviceInfo, version, "", objectPath, "Update");
+                   deviceInfo, version, "", objectPath, "FWUpdate");
 }
 
 void logVerificationFailed(
@@ -75,7 +75,7 @@ void logVerificationFailed(
         "Verify the firmware file integrity and compatibility. "
         "Ensure the firmware is signed and compatible with the device.";
     createLogEntry(conn, verificationFailed, Level::Error, deviceInfo, version,
-                   resolution, objectPath, "Update");
+                   resolution, objectPath, "FWUpdate");
 }
 
 void logUpdateSuccessful(
@@ -84,7 +84,7 @@ void logUpdateSuccessful(
     const std::string& objectPath)
 {
     createLogEntry(conn, updateSuccessful, Level::Informational, deviceInfo,
-                   version, "", objectPath, "Update");
+                   version, "", objectPath, "FWUpdate");
 }
 
 void logAwaitToActivate(
@@ -93,7 +93,7 @@ void logAwaitToActivate(
     const std::string& objectPath)
 {
     createLogEntry(conn, awaitToActivate, Level::Informational, deviceInfo,
-                   version, "", objectPath, "Update");
+                   version, "", objectPath, "FWUpdate");
 }
 
 void logApplyFailed(const std::shared_ptr<sdbusplus::asio::connection>& conn,
@@ -104,7 +104,7 @@ void logApplyFailed(const std::shared_ptr<sdbusplus::asio::connection>& conn,
         "Check device status and available space. "
         "Ensure the device is not in use and has sufficient storage.";
     createLogEntry(conn, applyFailed, Level::Error, deviceInfo, version,
-                   resolution, objectPath, "Update");
+                   resolution, objectPath, "FWUpdate");
 }
 
 void logActivateFailed(const std::shared_ptr<sdbusplus::asio::connection>& conn,
@@ -116,7 +116,7 @@ void logActivateFailed(const std::shared_ptr<sdbusplus::asio::connection>& conn,
         "Check device compatibility and firmware validation. "
         "Ensure the firmware is compatible and properly signed.";
     createLogEntry(conn, activateFailed, Level::Error, deviceInfo, version,
-                   resolution, objectPath, "Update");
+                   resolution, objectPath, "FWUpdate");
 }
 
 void logTargetDetermined(
@@ -125,7 +125,7 @@ void logTargetDetermined(
     const std::string& objectPath)
 {
     createLogEntry(conn, targetDetermined, Level::Informational, deviceInfo,
-                   version, "", objectPath, "Update");
+                   version, "", objectPath, "FWUpdate");
 }
 
 void printUsage(const char* programName)
@@ -161,7 +161,7 @@ bool updateFirmwareForDevice(
     const std::shared_ptr<sdbusplus::asio::connection>& conn,
     const std::string& objectPathPrefix)
 {
-    std::string deviceInfo = "NVMe_SSD_" + std::to_string(eid);
+    std::string deviceInfo = PLATFORM_DRIVE_PREFIX + std::to_string(eid);
     std::string objectPath = objectPathPrefix + std::to_string(eid);
     nvme_mi_ep_t ep = nullptr;
 
