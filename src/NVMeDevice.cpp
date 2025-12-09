@@ -178,6 +178,10 @@ std::string NVMeDevice::getManufacture(uint16_t vid)
     {
         return {"Kioxia"};
     }
+    if (vid == 0x25e)
+    {
+        return {"Solidigm"};
+    }
 
     return {"Unkown"};
 }
