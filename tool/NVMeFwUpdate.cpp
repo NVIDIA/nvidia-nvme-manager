@@ -42,6 +42,10 @@ constexpr int retryDelayMs = 100; // 100ms delay between retries
 constexpr int maxFirmwareDownloadRetries = 3;
 constexpr int retryDelayMsFirmware = 100; // 100ms delay between retries
 
+// Log completion timeout
+constexpr int logCompletionTimeoutMs =
+    200; // Time to wait for async D-Bus log calls to complete
+
 using Level = sdbusplus::xyz::openbmc_project::Logging::server::Entry::Level;
 
 // Additional firmware update event logging functions
@@ -126,6 +130,28 @@ void logTargetDetermined(
 {
     createLogEntry(conn, targetDetermined, Level::Informational, deviceInfo,
                    version, "", objectPath, "FWUpdate");
+}
+
+void logNoMatchingDevices(
+    const std::shared_ptr<sdbusplus::asio::connection>& conn)
+{
+    std::string serviceName = "Firmware Update Service";
+    std::string errorDescription = "No Matching Devices";
+    std::string resolution =
+        "Verify the FW package has devices that are listed in the"
+        " Redfish FW Inventory";
+    createLogEntry(conn, resourceErrorDetected, Level::Error, serviceName,
+                   errorDescription, resolution, "", "FWUpdate");
+}
+
+// Helper function to ensure async log entries complete before exit
+// Processes the I/O context for a reasonable duration to allow async
+// D-Bus calls to complete
+void ensureLogCompletion(const std::shared_ptr<boost::asio::io_context>& io)
+{
+    // run_for() processes handlers for the specified duration
+    // This gives async D-Bus calls time to complete
+    io->run_for(std::chrono::milliseconds(logCompletionTimeoutMs));
 }
 
 void printUsage(const char* programName)
@@ -486,11 +512,22 @@ int main(int argc, char* argv[])
             return 0;
         }
 
-        if (filename.empty() || version.empty() || objectPathPrefix.empty() ||
-            eids.empty())
+        if (eids.empty())
         {
             lg2::error(
-                "Error: firmware_path, version, object_path_prefix, and at least one EID are required");
+                "Error: At least one EID is required - no matching devices found");
+
+            // Create Redfish event log for no matching devices
+            logNoMatchingDevices(conn);
+            ensureLogCompletion(io);
+
+            return 1;
+        }
+
+        if (filename.empty() || version.empty() || objectPathPrefix.empty())
+        {
+            lg2::error(
+                "Error: firmware_path, version, and object_path_prefix are required");
             printUsage(args[0]);
             return 1;
         }
@@ -573,6 +610,9 @@ int main(int argc, char* argv[])
                 overallSuccess = false;
             }
         }
+
+        // Ensure all async log entries complete before exit
+        ensureLogCompletion(io);
 
         if (overallSuccess)
         {
