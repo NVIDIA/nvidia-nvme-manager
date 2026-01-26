@@ -28,8 +28,8 @@ NVMeDevice::NVMeDevice(boost::asio::io_context& io,
                        const std::string& path) :
     NvmeInterfaces(static_cast<sdbusplus::bus::bus&>(*conn), path.c_str(),
                    NvmeInterfaces::action::defer_emit),
-    conn(conn), objServer(objectServer), scanTimer(io), objPath(path), eid(eid),
-    bus(bus), net(net)
+    conn(conn), objServer(objectServer), scanTimer(io), initRetryTimer(io),
+    objPath(path), eid(eid), bus(bus), net(net)
 {
     std::filesystem::path p(path);
 
@@ -325,20 +325,68 @@ void NVMeDevice::initialize()
 
     NvmeInterfaces::emit_object_added();
 
+    // Start controller query
+    initRetryCount = 0;
+    queryController();
+}
+
+void NVMeDevice::queryController()
+{
+    constexpr int maxRetries = 5;
+    constexpr int initialDelayMs = 1000;
+
     intf->miScanCtrl([self{shared_from_this()}](
                          const std::error_code& ec,
                          const std::vector<nvme_mi_ctrl_t>& ctrlList) mutable {
         if (ec || ctrlList.empty())
         {
-            lg2::error(
-                "eid:{ID} - fail to scan controllers for the nvme subsystem {ERR}: {MSG}",
-                "ID", self->eid, "ERR", ec.value(), "MSG", ec.message());
-            self->presence = false;
-            self->Item::present(false, true);
+            if (self->initRetryCount >= maxRetries)
+            {
+                lg2::error(
+                    "eid:{ID} - fail to scan controllers after {RETRIES} attempts {ERR}: {MSG}",
+                    "ID", self->eid, "RETRIES", self->initRetryCount + 1, "ERR",
+                    ec.value(), "MSG", ec.message());
+                self->presence = false;
+                self->Item::present(false, true);
+                return;
+            }
+
+            // Exponential backoff: 1s, 2s, 4s, 8s, 16s
+            int delayMs = initialDelayMs << self->initRetryCount;
+            lg2::info(
+                "eid:{ID} - scan attempt {RETRY} failed, retrying in {DELAY}ms: {MSG}",
+                "ID", self->eid, "RETRY", self->initRetryCount + 1, "DELAY",
+                delayMs, "MSG", ec.message());
+
+            self->initRetryTimer.expires_after(
+                std::chrono::milliseconds(delayMs));
+            self->initRetryTimer.async_wait(
+                [self](const boost::system::error_code& timerEc) {
+                    if (timerEc == boost::asio::error::operation_aborted)
+                    {
+                        return; // Timer was cancelled
+                    }
+                    if (timerEc)
+                    {
+                        lg2::error("Init retry timer error: {MSG}", "MSG",
+                                   timerEc.message());
+                        return;
+                    }
+                    self->initRetryCount++;
+                    self->queryController();
+                });
             return;
         }
+
+        // Success!
         self->presence = true;
         self->Item::present(true, true);
+
+        if (self->initRetryCount > 0)
+        {
+            lg2::info("eid:{ID} - scan succeeded after {RETRY} retries", "ID",
+                      self->eid, "RETRY", self->initRetryCount);
+        }
 
         self->getDriveInfo();
     });

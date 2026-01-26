@@ -80,6 +80,7 @@ class NVMeDevice :
     NVMeDevice& operator=(const NVMeDevice& other) = delete;
 
     void initialize();
+    void queryController();
     void getDriveInfo();
     void getDriveLink();
     void pollDrive();
@@ -219,6 +220,7 @@ class NVMeDevice :
     std::shared_ptr<sdbusplus::asio::connection> conn;
     sdbusplus::asio::object_server& objServer;
     boost::asio::steady_timer scanTimer;
+    boost::asio::steady_timer initRetryTimer;
 
     bool driveFunctional{false};
     uint8_t smartWarning{0xff};
@@ -238,6 +240,7 @@ class NVMeDevice :
     uint32_t bus;
     int net;
     uint8_t retry{1};
+    int initRetryCount{0};
 
     // flag of no-deallocate modifies meida after sanitize(NODMMAS)
     uint32_t nodmmas{0};
