@@ -151,6 +151,32 @@ class NVMeDevice :
     std::shared_ptr<SoftwareInventory> getSoftwareInventory() const;
     std::string getFirmwareVersion();
 
+    // Drive state management
+    void updateLocationCode(const std::string& locCode);
+    void checkAndGenerateDriveEvent();
+    uint8_t getEid() const
+    {
+        return eid;
+    }
+    const std::string& getObjPath() const
+    {
+        return objPath;
+    }
+    const std::string& getLocationCode() const
+    {
+        return locationCode;
+    }
+
+    void setConnectivityDegraded(bool degraded)
+    {
+        connectivityDegraded = degraded;
+    }
+
+    bool isConnectivityDegraded() const
+    {
+        return connectivityDegraded;
+    }
+
     bool backupDeviceFault(bool value) override
     {
         backupDeviceErr = value;
@@ -212,4 +238,13 @@ class NVMeDevice :
     bool degradesErr{false};
     bool mediaErr{false};
     bool capacityErr{false};
+
+    // Drive state information
+    std::string locationCode;
+
+    // MCTP connectivity state
+    bool connectivityDegraded{false};
 };
+
+// Drive state management function
+void updateSingleDriveState(uint8_t eid);
