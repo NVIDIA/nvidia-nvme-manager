@@ -835,7 +835,6 @@ void NVMeMi::adminGetLogPage(
                         // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
                         reinterpret_cast<nvme_smart_log*>(data.data());
 
-                    std::this_thread::sleep_for(std::chrono::seconds(3));
                     constexpr int readLen = sizeof(nvme_smart_log) -
                                             sizeof(log->rsvd232);
                     rc = nvme_mi_admin_get_nsid_log(ctrl, true, lid, nsid,
@@ -985,7 +984,7 @@ void NVMeMi::adminGetLogPage(
                         // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
                         reinterpret_cast<nvme_sanitize_log_page*>(data.data());
 
-                    int rc = nvme_mi_admin_get_log_sanitize(ctrl, false, log);
+                    int rc = nvme_mi_admin_get_log_sanitize(ctrl, true, log);
                     if (rc != 0)
                     {
                         lg2::error(

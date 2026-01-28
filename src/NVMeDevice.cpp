@@ -471,14 +471,14 @@ void NVMeDevice::updatePercent(uint32_t endTime)
     auto time = getEstimateTime() + pollInterval;
     uint32_t percent = (endTime > 0) ? ((time * 100) / endTime) : 0;
 
+    // Cap percentage at 100% when time exceeds estimated time
+    if (percent > 100)
+    {
+        percent = 100;
+    }
+
     lg2::info("percent: {NUM} - {ECLTIME} / {MAXTIME}\n", "NUM", percent,
               "ECLTIME", time, "MAXTIME", endTime);
-    // the actual time greater than the estimated time so
-    // fine tune percent
-    if (time >= endTime)
-    {
-        percent = 99;
-    }
     Progress::progress(percent);
     setEstimateTime(time);
 }
