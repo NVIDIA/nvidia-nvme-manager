@@ -3,11 +3,21 @@
 #include <MCTPDiscovery.hpp>
 #include <NVMeDevice.hpp>
 #include <boost/asio/steady_timer.hpp>
+#include <dbusutil.hpp>
+#include <nlohmann/json.hpp>
 
+#include <cerrno>
+#include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <optional>
 #include <regex>
+#include <set>
+#include <utility>
 #include <vector>
+
+using Json = nlohmann::json;
 
 #ifdef INKERNEL_MCTP
 using eid_t = uint8_t;
@@ -27,10 +37,30 @@ std::unordered_map<uint8_t, std::shared_ptr<NVMeDevice>>& getDriveMap()
     return driveMap;
 }
 
+std::set<uint8_t>& getDiscoveredDriveEids()
+{
+    static std::set<uint8_t> discoveredDriveEids;
+    return discoveredDriveEids;
+}
+
+bool& getColdRemovalCheckComplete()
+{
+    static bool coldRemovalCheckComplete = false;
+    return coldRemovalCheckComplete;
+}
+
+// Forward declarations
+static bool isHostOff(const std::shared_ptr<sdbusplus::asio::connection>& conn);
+static void markDriveAsRemoved(uint8_t eid);
+static std::optional<eid_t> parseEidFromObjectPath(const std::string& path);
+static void checkForColdRemovedDrives(
+    const std::shared_ptr<sdbusplus::asio::connection>& conn);
+
 static void handleEmEndpoints(const ManagedObjectType& objData)
 {
     std::string form;
     std::string driveAssoc;
+    std::string locCode;
     uint64_t eid = 0;
     uint64_t bus = -1;
 
@@ -76,6 +106,17 @@ static void handleEmEndpoints(const ManagedObjectType& objData)
             }
             form = std::get<std::string>(findProp->second);
         }
+        // Get LocationCode from EntityManager
+        ep = data.find("xyz.openbmc_project.Inventory.Decorator.LocationCode");
+        if (ep != data.end())
+        {
+            const Properties& prop = ep->second;
+            auto findProp = prop.find("LocationCode");
+            if (findProp != prop.end())
+            {
+                locCode = std::get<std::string>(findProp->second);
+            }
+        }
         // To support a design that NVMe drives are on a backplane rather than
         // baseboard/DC-SCM. Get the associations from Dbus object, and assign
         // associations for NVMe drive.
@@ -119,12 +160,18 @@ static void handleEmEndpoints(const ManagedObjectType& objData)
                 context->driveAssociation = driveAssoc;
                 context->updateDriveAssociations();
             }
+            if (!locCode.empty())
+            {
+                // Update location code
+                context->updateLocationCode(locCode);
+            }
         }
     }
 
     // wait for worker ready to handle NVMe-MI commands.
     std::this_thread::sleep_for(std::chrono::seconds(2));
 
+    // Continue with drive initialization
     auto& driveMap = getDriveMap();
     for (const auto& [_, context] : driveMap)
     {
@@ -207,8 +254,6 @@ static void handleMCTPEndpoints(
         }
         if (!nvmeCap)
         {
-            lg2::info("No supported NVMe-MI message type on EID: {EID}", "EID",
-                      eid);
             continue;
         }
         uint32_t bus = -1;
@@ -227,6 +272,10 @@ static void handleMCTPEndpoints(
 
         auto& driveMap = getDriveMap();
         addr.push_back(0);
+
+        // Track discovered drive EID for cold-removal detection
+        getDiscoveredDriveEids().insert(eid);
+
         if (!driveMap.contains(eid))
         {
             lg2::info("Drive is added on EID: {EID}", "EID", eid);
@@ -244,6 +293,23 @@ static void handleMCTPEndpoints(
         else
         {
             lg2::info("Drive has been added on EID: {EID}", "EID", eid);
+
+            // Clear connectivity degraded flag since InterfacesAdded means
+            // endpoint is available (mctpd may not always emit connectivity
+            // change signal)
+            auto driveIt = driveMap.find(eid);
+            if (driveIt != driveMap.end())
+            {
+                bool wasDegraded = driveIt->second->isConnectivityDegraded();
+                driveIt->second->setConnectivityDegraded(false);
+
+                if (wasDegraded)
+                {
+                    lg2::info(
+                        "Drive EID {EID} MCTP endpoint re-discovered, clearing degraded state and resuming polling",
+                        "EID", eid);
+                }
+            }
         }
     }
     // collect inventory data from EM
@@ -271,7 +337,462 @@ void createDrives(boost::asio::io_context& io,
 #endif
 }
 
-static void interfaceRemoved(sdbusplus::message::message& message)
+/**
+ * @brief Update or add a single drive's state in the state file
+ * Does not affect other drives in the file
+ * @param eid Drive EID to update
+ */
+void updateSingleDriveState(uint8_t eid)
+{
+    try
+    {
+        std::string filePath = driveStateFile;
+        Json driveStates = Json::array();
+
+        // Read existing state file if it exists
+        if (std::filesystem::exists(filePath))
+        {
+            std::ifstream inputFile(filePath);
+            if (inputFile.is_open())
+            {
+                try
+                {
+                    inputFile >> driveStates;
+                }
+                catch (const std::exception& e)
+                {
+                    lg2::warning("Failed to parse state file: {ERR}", "ERR",
+                                 e.what());
+                    driveStates = Json::array();
+                }
+            }
+        }
+
+        // Find the drive in driveMap
+        auto& driveMap = getDriveMap();
+        auto driveIt = driveMap.find(eid);
+        if (driveIt == driveMap.end())
+        {
+            lg2::warning("Drive EID {EID} not found in driveMap", "EID", eid);
+            return;
+        }
+
+        // Build the new drive state
+        Json newDriveState;
+        newDriveState["eid"] = eid;
+
+        const auto& locCode = driveIt->second->getLocationCode();
+        if (!locCode.empty())
+        {
+            newDriveState["locationCode"] = locCode;
+        }
+
+        const auto& serialNum = driveIt->second->serialNumber();
+        if (!serialNum.empty())
+        {
+            newDriveState["serialNumber"] = serialNum;
+        }
+
+        newDriveState["connectivity"] = "Available";
+
+        // Find and update existing entry or add new one
+        bool found = false;
+        for (auto& drive : driveStates)
+        {
+            if (drive.contains("eid") && drive["eid"] == eid)
+            {
+                drive = newDriveState;
+                found = true;
+                lg2::info("Updated state for drive EID {EID}", "EID", eid);
+                break;
+            }
+        }
+
+        if (!found)
+        {
+            driveStates.push_back(newDriveState);
+            lg2::info("Added new state for drive EID {EID}", "EID", eid);
+        }
+
+        // Ensure directory exists
+        std::filesystem::path dirPath =
+            std::filesystem::path(filePath).parent_path();
+        if (!dirPath.empty() && !std::filesystem::exists(dirPath))
+        {
+            std::filesystem::create_directories(dirPath);
+        }
+
+        // Write back to file
+        std::ofstream outputFile(filePath);
+        if (outputFile.is_open())
+        {
+            outputFile << driveStates.dump(4) << '\n';
+        }
+        else
+        {
+            lg2::error("Failed to open state file: {ERR}", "ERR",
+                       std::strerror(errno));
+        }
+    }
+    catch (const std::exception& e)
+    {
+        lg2::error("Failed to update single drive state: {ERR}", "ERR",
+                   e.what());
+    }
+}
+
+/**
+ * @brief Mark drive as removed in state file
+ * Removes serial number to help detect drive swaps properly
+ * @param eid Drive EID
+ */
+static void markDriveAsRemoved(uint8_t eid)
+{
+    try
+    {
+        std::string filePath = driveStateFile;
+        Json driveStates = Json::array();
+
+        // Read existing state file if it exists
+        if (std::filesystem::exists(filePath))
+        {
+            std::ifstream inputFile(filePath);
+            if (inputFile.is_open())
+            {
+                try
+                {
+                    inputFile >> driveStates;
+                }
+                catch (const std::exception& e)
+                {
+                    lg2::warning("Failed to parse state file: {ERR}", "ERR",
+                                 e.what());
+                    driveStates = Json::array();
+                }
+            }
+        }
+
+        // Find and update the drive entry
+        bool found = false;
+        for (auto& drive : driveStates)
+        {
+            if (drive.contains("eid") && drive["eid"] == eid)
+            {
+                drive["connectivity"] = "Removed";
+
+                // Remove serial number to help detect drive swaps properly
+                if (drive.contains("serialNumber"))
+                {
+                    drive.erase("serialNumber");
+                    lg2::info(
+                        "Removed serial number for drive EID {EID} marked as Removed",
+                        "EID", eid);
+                }
+
+                found = true;
+                lg2::info("Marked drive EID {EID} as Removed in state file",
+                          "EID", eid);
+                break;
+            }
+        }
+
+        // If not found, create new entry
+        if (!found)
+        {
+            Json newDrive;
+            newDrive["eid"] = eid;
+            newDrive["connectivity"] = "Removed";
+            driveStates.push_back(newDrive);
+            lg2::info("Created new Removed entry for drive EID {EID}", "EID",
+                      eid);
+        }
+
+        // Write back to file
+        std::filesystem::path dirPath =
+            std::filesystem::path(filePath).parent_path();
+        if (!dirPath.empty() && !std::filesystem::exists(dirPath))
+        {
+            std::filesystem::create_directories(dirPath);
+        }
+
+        std::ofstream outputFile(filePath);
+        if (outputFile.is_open())
+        {
+            outputFile << driveStates.dump(4) << '\n';
+        }
+        else
+        {
+            lg2::error("Failed to open state file: {ERR}", "ERR",
+                       std::strerror(errno));
+        }
+    }
+    catch (const std::exception& e)
+    {
+        lg2::error("Failed to mark drive as removed: {ERR}", "ERR", e.what());
+    }
+}
+
+/**
+ * @brief Parse EID from MCTP object path
+ * @param path MCTP object path (e.g., "/au/com/codeconstruct/mctp1/200")
+ * @return EID value if successful, std::nullopt otherwise
+ */
+static std::optional<eid_t> parseEidFromObjectPath(const std::string& path)
+{
+    size_t lastSlash = path.find_last_of('/');
+    if (lastSlash == std::string::npos)
+    {
+        lg2::warning("Invalid MCTP path format: {PATH}", "PATH", path);
+        return std::nullopt;
+    }
+
+    std::string eidStr = path.substr(lastSlash + 1);
+    try
+    {
+        int eidValue = std::stoi(eidStr);
+        if (eidValue < 0 || eidValue > 255)
+        {
+            lg2::warning("EID out of range in path {PATH}: {EID}", "PATH", path,
+                         "EID", eidValue);
+            return std::nullopt;
+        }
+        return static_cast<eid_t>(eidValue);
+    }
+    catch (const std::exception& e)
+    {
+        lg2::warning("Failed to parse EID from path {PATH}: {ERR}", "PATH",
+                     path, "ERR", e.what());
+        return std::nullopt;
+    }
+}
+
+/**
+ * @brief Check if host is powered off or transitioning to off
+ * @return true if host is off/transitioning to off, false if running
+ */
+static bool isHostOff(const std::shared_ptr<sdbusplus::asio::connection>& conn)
+{
+    try
+    {
+        auto method = conn->new_method_call("xyz.openbmc_project.State.Host",
+                                            "/xyz/openbmc_project/state/host0",
+                                            "org.freedesktop.DBus.Properties",
+                                            "Get");
+        method.append("xyz.openbmc_project.State.Host", "CurrentHostState");
+
+        auto reply = conn->call(method);
+        std::variant<std::string> hostState;
+        reply.read(hostState);
+
+        std::string state = std::get<std::string>(hostState);
+
+        // Return true if host is Off or transitioning to Off
+        // xyz.openbmc_project.State.Host.HostState.Off
+        // xyz.openbmc_project.State.Host.HostState.TransitioningToOff
+        return (state.find("Off") != std::string::npos);
+    }
+    catch (const sdbusplus::exception::SdBusError& e)
+    {
+        // Service not available yet during early boot - this is normal
+        // ServiceUnknown and NameHasNoOwner both map to ENXIO
+        int err = e.get_errno();
+        if (err == ENXIO)
+        {
+            lg2::debug(
+                "Host state service not available yet ({ERROR}), assuming host is running",
+                "ERROR", e.name());
+        }
+        else
+        {
+            lg2::warning("Failed to get host power state: {ERR}, "
+                         "assuming host is running",
+                         "ERR", e.what());
+        }
+        // Default to "not off" to be conservative (generate event on
+        // uncertainty)
+        return false;
+    }
+    catch (const std::exception& e)
+    {
+        lg2::warning(
+            "Failed to get host power state: {ERR}, assuming host is running",
+            "ERR", e.what());
+        return false;
+    }
+}
+
+static void connectivityChanged(
+    sdbusplus::message::message& message,
+    const std::shared_ptr<sdbusplus::asio::connection>& /* conn */,
+    const std::string& mctpPath)
+{
+    if (message.is_method_error())
+    {
+        lg2::error("connectivityChanged callback method error");
+        return;
+    }
+
+    try
+    {
+        std::string interfaceName;
+        std::map<std::string, std::variant<std::string>> changedProperties;
+        message.read(interfaceName, changedProperties);
+
+        auto connectivityIt = changedProperties.find("Connectivity");
+        if (connectivityIt == changedProperties.end())
+        {
+            return;
+        }
+
+        std::string connectivity =
+            std::get<std::string>(connectivityIt->second);
+
+        // Extract EID from MCTP path
+        // Path format: /au/com/codeconstruct/mctp1/networks/1/endpoints/211
+        auto eidOpt = parseEidFromObjectPath(mctpPath);
+        if (!eidOpt.has_value())
+        {
+            return;
+        }
+        eid_t eid8 = eidOpt.value();
+
+        // Update drive connectivity state
+        auto& driveMap = getDriveMap();
+        auto driveIt = driveMap.find(static_cast<uint8_t>(eid8));
+
+        if (driveIt != driveMap.end())
+        {
+            bool isDegraded = (connectivity != "Available");
+            driveIt->second->setConnectivityDegraded(isDegraded);
+
+            if (isDegraded)
+            {
+                lg2::warning(
+                    "Drive EID {EID} MCTP connectivity degraded, stopping sensor polling",
+                    "EID", static_cast<int>(eid8));
+            }
+            else
+            {
+                lg2::info(
+                    "Drive EID {EID} MCTP connectivity restored, resuming sensor polling",
+                    "EID", static_cast<int>(eid8));
+            }
+        }
+    }
+    catch (const std::exception& e)
+    {
+        lg2::error("Exception in connectivityChanged: {ERRMSG}", "ERRMSG",
+                   e.what());
+    }
+}
+
+/**
+ * @brief Check for cold-removed drives after boot
+ * Compares discovered drive EIDs with state file to detect drives that were
+ * removed while system was powered off
+ */
+static void checkForColdRemovedDrives(
+    const std::shared_ptr<sdbusplus::asio::connection>& conn)
+{
+    try
+    {
+        std::string filePath = driveStateFile;
+
+        // If no state file exists, nothing to check
+        if (!std::filesystem::exists(filePath))
+        {
+            lg2::info(
+                "No previous drive state file, no cold-removal check needed");
+            getColdRemovalCheckComplete() = true;
+            return;
+        }
+
+        // Read state file
+        std::ifstream inputFile(filePath);
+        if (!inputFile.is_open())
+        {
+            lg2::warning("Cannot open state file for cold-removal check");
+            getColdRemovalCheckComplete() = true;
+            return;
+        }
+
+        Json driveStates;
+        try
+        {
+            inputFile >> driveStates;
+        }
+        catch (const std::exception& e)
+        {
+            lg2::error("Failed to parse drive state file: {ERR}", "ERR",
+                       e.what());
+            getColdRemovalCheckComplete() = true;
+            return;
+        }
+
+        // Check each drive in state file
+        for (const auto& drive : driveStates)
+        {
+            if (!drive.contains("eid"))
+            {
+                continue;
+            }
+
+            uint8_t eid = drive["eid"];
+            std::string connectivity = drive.contains("connectivity")
+                                           ? drive["connectivity"]
+                                           : "Available";
+
+            // Only check drives that were Available (not already Removed)
+            if (connectivity != "Available")
+            {
+                continue;
+            }
+
+            // If drive was Available but not discovered after boot =
+            // cold-removed
+            if (!getDiscoveredDriveEids().contains(eid))
+            {
+                std::string location = drive.contains("locationCode")
+                                           ? drive["locationCode"]
+                                           : "Unknown Location";
+                std::string serialNumber = drive.contains("serialNumber")
+                                               ? drive["serialNumber"]
+                                               : "Unknown";
+
+                lg2::info(
+                    "Cold-removal detected: Drive EID {EID} (SN:{SN}, Loc:{LOC}) not present after boot",
+                    "EID", static_cast<int>(eid), "SN", serialNumber, "LOC",
+                    location);
+
+                // Generate DriveRemoved event
+                std::string redfishPath = redfishDrivePathPrefix +
+                                          std::string(drivePrefix) +
+                                          std::to_string(eid);
+                createLogEntry(conn, driveRemoved, Level::Critical, location,
+                               "", driveRemovedResolution, redfishPath);
+                lg2::info(
+                    "Generated DriveRemoved event for cold-removed drive EID {EID} at {LOC}",
+                    "EID", static_cast<int>(eid), "LOC", location);
+
+                // Mark drive as Removed in state file
+                markDriveAsRemoved(eid);
+            }
+        }
+
+        getColdRemovalCheckComplete() = true;
+        lg2::info("Cold-removal detection completed");
+    }
+    catch (const std::exception& e)
+    {
+        lg2::error("Exception in checkForColdRemovedDrives: {ERR}", "ERR",
+                   e.what());
+        getColdRemovalCheckComplete() = true;
+    }
+}
+
+static void
+    interfaceRemoved(sdbusplus::message::message& message,
+                     const std::shared_ptr<sdbusplus::asio::connection>& conn)
 {
     if (message.is_method_error())
     {
@@ -279,25 +800,101 @@ static void interfaceRemoved(sdbusplus::message::message& message)
         return;
     }
 
-    std::string objectName;
-    boost::container::flat_map<std::string, std::variant<size_t>> values;
+    sdbusplus::message::object_path objectPath;
+    std::vector<std::string> interfacesRemoved;
 
     try
     {
-        message.read(objectName, values);
+        message.read(objectPath, interfacesRemoved);
 
-        auto findEid = values.find("EID");
-        if (findEid != values.end())
+        // Check if MCTP.Endpoint interface is being removed
+        bool hasMctpEndpoint = false;
+        for (const auto& iface : interfacesRemoved)
         {
-            auto obj = findEid->second;
-            auto eid = std::get<size_t>(obj);
-            lg2::info("Remove Drive:{EID}.", "EID", eid);
-            // Todo: implement it for drive hotplug.
+            if (iface == "xyz.openbmc_project.MCTP.Endpoint" ||
+                iface == "au.com.codeconstruct.MCTP.Endpoint1")
+            {
+                hasMctpEndpoint = true;
+                break;
+            }
         }
+
+        if (!hasMctpEndpoint)
+        {
+            return;
+        }
+
+        // Extract EID from object path
+        auto eidOpt = parseEidFromObjectPath(objectPath.str);
+        if (!eidOpt.has_value())
+        {
+            return;
+        }
+        eid_t eid = eidOpt.value();
+
+        // If power off, remove from driveMap but don't generate events
+        if (isHostOff(conn))
+        {
+            auto& driveMap = getDriveMap();
+            auto driveIt = driveMap.find(static_cast<uint8_t>(eid));
+            if (driveIt != driveMap.end())
+            {
+                lg2::info(
+                    "Drive EID {EID} endpoint removed during host power-off, removing from driveMap",
+                    "EID", static_cast<int>(eid));
+                driveMap.erase(driveIt);
+            }
+            return;
+        }
+
+        // Check if EID in drive map
+        auto& driveMap = getDriveMap();
+        auto driveIt = driveMap.find(static_cast<uint8_t>(eid));
+        if (driveIt == driveMap.end())
+        {
+            lg2::debug("Drive EID {EID} not in driveMap, ignoring removal",
+                       "EID", static_cast<int>(eid));
+            return;
+        }
+
+        // Host is running and drive exists - this is TRUE hot-removal
+        lg2::info("Drive EID {EID} physically removed while host running",
+                  "EID", static_cast<int>(eid));
+
+        // Get location code before removing the drive
+        const auto& locationCode = driveIt->second->getLocationCode();
+        auto location = locationCode.empty() ? "Unknown Location"
+                                             : std::string(locationCode);
+
+        // Generate DriveRemoved Redfish event (Severity: Critical)
+        std::string redfishPath = redfishDrivePathPrefix +
+                                  std::string(drivePrefix) +
+                                  std::to_string(eid);
+        createLogEntry(conn, driveRemoved, Level::Critical,
+                       location, // arg0: location of the drive
+                       "",       // arg1 not used for drive events
+                       driveRemovedResolution, redfishPath);
+        lg2::info(
+            "Generated DriveRemoved event for EID {EID} at location {LOC}",
+            "EID", static_cast<int>(eid), "LOC", location);
+
+        // Mark drive as Removed in state file (keep the entry for future
+        // comparison)
+        markDriveAsRemoved(eid);
+
+        // Remove from driveMap (runtime cleanup)
+        driveMap.erase(driveIt);
+        lg2::info("Drive EID {EID} removed from driveMap", "EID",
+                  static_cast<int>(eid));
     }
     catch (const sdbusplus::exception::SdBusError& e)
     {
         lg2::error("SdBusError: {ERRMSG}", "ERRMSG", e.what());
+    }
+    catch (const std::exception& e)
+    {
+        lg2::error("Exception in interfaceRemoved: {ERRMSG}", "ERRMSG",
+                   e.what());
     }
 }
 
@@ -394,11 +991,136 @@ int main()
             static_cast<sdbusplus::bus::bus&>(*bus),
             "type='signal',member='InterfacesRemoved',arg0path='" +
                 std::string(mctpEpsPath) + "/'",
-            [&filterTimer](sdbusplus::message::message& msg) {
+            [&filterTimer, bus](sdbusplus::message::message& msg) {
             filterTimer.cancel();
-            interfaceRemoved(msg);
+            interfaceRemoved(msg, bus);
         });
         matches.emplace_back(std::move(ifaceRemovedMatch));
+
+        // Watch for MCTP Connectivity property changes on all endpoints
+        // Monitor au.com.codeconstruct.MCTP.Endpoint1 interface
+        auto connectivityMatch = std::make_unique<sdbusplus::bus::match::match>(
+            static_cast<sdbusplus::bus::bus&>(*bus),
+            "type='signal',member='PropertiesChanged',path_namespace='" +
+                std::string(mctpEpsPath) +
+                "',arg0='au.com.codeconstruct.MCTP.Endpoint1'",
+            [bus](sdbusplus::message::message& msg) {
+            std::string path(msg.get_path());
+            connectivityChanged(msg, bus, path);
+        });
+        matches.emplace_back(std::move(connectivityMatch));
+
+        // Monitor boot progress for cold-removal detection
+        // Wait for OSRunning state or configured timeout
+        auto bootProgressTimer =
+            std::make_shared<boost::asio::steady_timer>(io);
+        bootProgressTimer->expires_after(
+            std::chrono::seconds(bootProgressTimeout));
+        bootProgressTimer->async_wait(
+            [bus, bootProgressTimer](const boost::system::error_code& ec) {
+            if (ec == boost::asio::error::operation_aborted)
+            {
+                return; // Timer was cancelled (boot reached OSRunning)
+            }
+
+            if (!getColdRemovalCheckComplete())
+            {
+                lg2::info(
+                    "Boot progress timeout ({TIMEOUT} seconds), checking for cold-removed drives",
+                    "TIMEOUT", bootProgressTimeout);
+                checkForColdRemovedDrives(bus);
+            }
+        });
+
+        auto bootProgressMatch = std::make_unique<sdbusplus::bus::match::match>(
+            static_cast<sdbusplus::bus::bus&>(*bus),
+            "type='signal',interface='org.freedesktop.DBus.Properties',"
+            "member='PropertiesChanged',"
+            "path='/xyz/openbmc_project/state/host0',"
+            "arg0='xyz.openbmc_project.State.Boot.Progress'",
+            [bus, bootProgressTimer](sdbusplus::message::message& msg) {
+            if (getColdRemovalCheckComplete())
+            {
+                return; // Already checked
+            }
+
+            std::string interfaceName;
+            std::map<std::string, std::variant<std::string>> changedProperties;
+
+            try
+            {
+                msg.read(interfaceName, changedProperties);
+
+                auto it = changedProperties.find("BootProgress");
+                if (it != changedProperties.end())
+                {
+                    std::string bootProgress =
+                        std::get<std::string>(it->second);
+                    lg2::info("Boot progress changed to: {PROGRESS}",
+                              "PROGRESS", bootProgress);
+
+                    // Check if OSRunning state reached
+                    // xyz.openbmc_project.State.Boot.Progress.ProgressStages.OSRunning
+                    if (bootProgress.find("OSRunning") != std::string::npos)
+                    {
+                        lg2::info(
+                            "OS running state reached, checking for cold-removed drives");
+                        bootProgressTimer->cancel();
+                        checkForColdRemovedDrives(bus);
+                    }
+                }
+            }
+            catch (const std::exception& e)
+            {
+                lg2::error("Error processing boot progress change: {ERR}",
+                           "ERR", e.what());
+            }
+        });
+        matches.emplace_back(std::move(bootProgressMatch));
+
+        // Monitor host power state to reset cold-removal check on power-off
+        auto hostStateMatch = std::make_unique<sdbusplus::bus::match::match>(
+            static_cast<sdbusplus::bus::bus&>(*bus),
+            "type='signal',interface='org.freedesktop.DBus.Properties',"
+            "member='PropertiesChanged',"
+            "path='/xyz/openbmc_project/state/host0',"
+            "arg0='xyz.openbmc_project.State.Host'",
+            [bootProgressTimer](sdbusplus::message::message& msg) {
+            std::string interfaceName;
+            std::map<std::string, std::variant<std::string>> changedProperties;
+
+            try
+            {
+                msg.read(interfaceName, changedProperties);
+
+                auto it = changedProperties.find("CurrentHostState");
+                if (it != changedProperties.end())
+                {
+                    std::string hostState = std::get<std::string>(it->second);
+                    lg2::info("Host state changed to: {STATE}", "STATE",
+                              hostState);
+
+                    // Reset cold-removal check flag when host powers off
+                    // xyz.openbmc_project.State.Host.HostState.Off
+                    if (hostState.find("Off") != std::string::npos)
+                    {
+                        lg2::info(
+                            "Host powered off, resetting cold-removal check state");
+                        getColdRemovalCheckComplete() = false;
+                        getDiscoveredDriveEids().clear();
+                        // Cancel boot progress timer to prevent unnecessary
+                        // cold-removal check
+                        bootProgressTimer->cancel();
+                    }
+                }
+            }
+            catch (const std::exception& e)
+            {
+                lg2::error("Error processing host state change: {ERR}", "ERR",
+                           e.what());
+            }
+        });
+        matches.emplace_back(std::move(hostStateMatch));
 
         io.run();
         return 0;

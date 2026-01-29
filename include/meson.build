@@ -9,6 +9,8 @@ conf_data.set_quoted(
     'PLATFORM_DRIVE_PREFIX',
     get_option('platform_drive_prefix'),
 )
+conf_data.set_quoted('DRIVE_STATE_FILE', get_option('drive_state_file'))
+conf_data.set('BOOT_PROGRESS_TIMEOUT', get_option('boot_progress_timeout'))
 configure_file(
     input: 'nvme-mi_config.h.in',
     output: 'nvme-mi_config.h',

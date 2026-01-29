@@ -12,19 +12,6 @@
 #include <iostream>
 #include <span>
 
-const std::string driveFailureResolution{
-    "Ensure all cables are properly and securely connected. Ensure all drives "
-    "are fully seated. Replace the defective cables, drive, or both."};
-const std::string drivePfaResolution{
-    "If this drive is not part of a fault-tolerant volume, first back up all "
-    "data, then replace the drive and restore all data afterward. If this "
-    "drive is part of a fault-tolerant volume, replace this drive as soon as "
-    "possible as long as the health is OK"};
-
-const std::string redfishDrivePathPrefix{
-    "/redfish/v1/Systems/System_0/Storage/1/Drives/"};
-const std::string redfishDriveName{"NVMe Drive"};
-
 const std::string driveConfig{"/usr/share/nvidia-nvme-manager/drive.json"};
 
 const std::uint8_t maxIdentifyCmdRetry = 3;
@@ -293,6 +280,9 @@ void NVMeDevice::getDriveInfo()
         self->createSoftwareInventory();
 #endif
 
+        // create drive events if there is new drive or swap drive found
+        self->checkAndGenerateDriveEvent();
+
         self->getDriveLink();
     });
 }
@@ -397,8 +387,8 @@ void NVMeDevice::markFunctional(bool functional)
             markStatus("critical");
 
             createLogEntry(conn, "ResourceEvent.1.0.ResourceErrorsDetected",
-                           Level::Critical, redfishDriveName + driveIndex,
-                           "Drive Failure", driveFailureResolution,
+                           Level::Critical, driveIndex, "Drive Failure",
+                           driveFailureResolution,
                            redfishDrivePathPrefix + driveIndex);
         }
         else
@@ -417,14 +407,14 @@ void NVMeDevice::generateRedfishEventbySmart(uint8_t sw)
     {
         createLogEntry(
             conn, "ResourceEvent.1.0.ResourceErrorsDetected", Level::Warning,
-            redfishDriveName + driveIndex,
+            driveIndex,
             "Persistent Memory Region has become read-only or unreliable",
             drivePfaResolution, redfishDrivePathPrefix + driveIndex);
     }
     if ((sw & (NVME_SMART_CRIT_VOLATILE_MEMORY)) != 0)
     {
         createLogEntry(conn, "ResourceEvent.1.0.ResourceErrorsDetected",
-                       Level::Warning, redfishDriveName + driveIndex,
+                       Level::Warning, driveIndex,
                        "volatile memory backup device has failed",
                        drivePfaResolution, redfishDrivePathPrefix + driveIndex);
     }
@@ -432,21 +422,21 @@ void NVMeDevice::generateRedfishEventbySmart(uint8_t sw)
     {
         createLogEntry(
             conn, "ResourceEvent.1.0.ResourceErrorsDetected", Level::Warning,
-            redfishDriveName + driveIndex,
+            driveIndex,
             "available spare capacity has fallen below the threshold",
             drivePfaResolution, redfishDrivePathPrefix + driveIndex);
     }
     if ((sw & (NVME_SMART_CRIT_DEGRADED)) != 0)
     {
         createLogEntry(conn, "ResourceEvent.1.0.ResourceErrorsDetected",
-                       Level::Warning, redfishDriveName + driveIndex,
+                       Level::Warning, driveIndex,
                        "NVM subsystem reliability has been degraded",
                        drivePfaResolution, redfishDrivePathPrefix + driveIndex);
     }
     if ((sw & (NVME_SMART_CRIT_MEDIA)) != 0)
     {
         createLogEntry(conn, "ResourceEvent.1.0.ResourceErrorsDetected",
-                       Level::Warning, redfishDriveName + driveIndex,
+                       Level::Warning, driveIndex,
                        "all of the media has been placed in read only mode",
                        drivePfaResolution, redfishDrivePathPrefix + driveIndex);
     }
@@ -454,8 +444,7 @@ void NVMeDevice::generateRedfishEventbySmart(uint8_t sw)
     {
         createLogEntry(
             conn, "ResourceEvent.1.0.ResourceErrorsDetected", Level::Warning,
-            redfishDriveName + driveIndex,
-            "temperature is over or under the threshold",
+            driveIndex, "temperature is over or under the threshold",
             "Check the condition of the resource listed in OriginOfCondition",
             redfishDrivePathPrefix + driveIndex);
     }
@@ -487,7 +476,15 @@ void NVMeDevice::pollDrive()
 {
     scanTimer.expires_after(std::chrono::seconds(pollInterval));
     scanTimer.async_wait(
-        [self{shared_from_this()}](const boost::system::error_code errorCode) {
+        [weak{weak_from_this()}](const boost::system::error_code errorCode) {
+        // Try to lock weak_ptr to get shared_ptr
+        auto self = weak.lock();
+        if (!self)
+        {
+            // Drive instance has been destroyed, exit
+            return;
+        }
+
         if (errorCode == boost::asio::error::operation_aborted)
         {
             return; // we're being canceled
@@ -501,6 +498,16 @@ void NVMeDevice::pollDrive()
         if (!self->presence)
         {
             self->initialize();
+            return;
+        }
+
+        // Check connectivity state before polling
+        if (self->isConnectivityDegraded())
+        {
+            lg2::debug(
+                "eid:{ID} - MCTP connectivity degraded, skipping sensor polling",
+                "ID", self->eid);
+            self->pollDrive();
             return;
         }
 
@@ -814,3 +821,150 @@ std::string NVMeDevice::getFirmwareVersion()
     return Version::version();
 }
 #endif
+
+void NVMeDevice::updateLocationCode(const std::string& locCode)
+{
+    locationCode = locCode;
+}
+
+void NVMeDevice::checkAndGenerateDriveEvent()
+{
+    try
+    {
+        std::string filePath = driveStateFile;
+
+        // If no state file exists, this is first discovery - save state without
+        // event
+        if (!std::filesystem::exists(filePath))
+        {
+            lg2::info("No state file, first discovery for EID {EID}", "EID",
+                      static_cast<int>(eid));
+            updateSingleDriveState(eid);
+            return;
+        }
+
+        // Read state file
+        std::ifstream inputFile(filePath);
+        if (!inputFile.is_open())
+        {
+            lg2::warning("Cannot open state file for EID {EID}", "EID",
+                         static_cast<int>(eid));
+            return;
+        }
+
+        nlohmann::json driveStates;
+        try
+        {
+            inputFile >> driveStates;
+        }
+        catch (const std::exception& e)
+        {
+            lg2::error("Failed to parse state file: {ERR}", "ERR", e.what());
+            return;
+        }
+
+        std::string currentSN = Asset::serialNumber();
+        std::string currentLoc = locationCode;
+
+        // Check if drive entry exists in state file
+        bool found = false;
+        for (const auto& drive : driveStates)
+        {
+            if (drive.contains("eid") && drive["eid"] == eid)
+            {
+                found = true;
+                std::string connectivity = drive.contains("connectivity")
+                                               ? drive["connectivity"]
+                                               : "Available";
+
+                if (connectivity == "Removed")
+                {
+                    // Drive was removed and now it's back
+                    lg2::info(
+                        "Drive EID {EID} returning from Removed state, generating DriveInserted event",
+                        "EID", static_cast<int>(eid));
+
+                    std::string location =
+                        currentLoc.empty() ? "Unknown Location" : currentLoc;
+                    std::string redfishPath =
+                        std::string(redfishDrivePathPrefix) +
+                        std::string(drivePrefix) + std::to_string(eid);
+
+                    createLogEntry(conn, driveInserted, Level::Informational,
+                                   location, "", driveInsertedResolution,
+                                   redfishPath);
+                    lg2::info(
+                        "Generated DriveInserted event for returning drive EID {EID} at {LOC}",
+                        "EID", static_cast<int>(eid), "LOC", location);
+
+                    // Update state file
+                    updateSingleDriveState(eid);
+                }
+                else
+                {
+                    // Drive was Available - check for swap (different SN at
+                    // same location)
+                    std::string prevSN = drive.contains("serialNumber")
+                                             ? drive["serialNumber"]
+                                             : "";
+
+                    if (!currentSN.empty() && !prevSN.empty() &&
+                        currentSN != prevSN)
+                    {
+                        // Serial number changed - this is a swap
+                        lg2::info(
+                            "Drive swap detected at EID {EID}: Old SN:{OLDSN} -> New SN:{NEWSN}",
+                            "EID", static_cast<int>(eid), "OLDSN", prevSN,
+                            "NEWSN", currentSN);
+
+                        std::string location = currentLoc.empty()
+                                                   ? "Unknown Location"
+                                                   : currentLoc;
+                        std::string redfishPath =
+                            std::string(redfishDrivePathPrefix) +
+                            std::string(drivePrefix) + std::to_string(eid);
+
+                        // Generate DriveRemoved for old drive
+                        createLogEntry(conn, driveRemoved, Level::Critical,
+                                       location, "", driveRemovedResolution,
+                                       redfishPath);
+
+                        // Generate DriveInserted for new drive
+                        createLogEntry(conn, driveInserted,
+                                       Level::Informational, location, "",
+                                       driveInsertedResolution, redfishPath);
+
+                        lg2::info(
+                            "Generated swap events for EID {EID}: old SN removed, new SN inserted",
+                            "EID", static_cast<int>(eid));
+
+                        // Update state file with new drive info
+                        updateSingleDriveState(eid);
+                    }
+                    else
+                    {
+                        lg2::info(
+                            "Drive EID {EID} already in state file with same SN, no event",
+                            "EID", static_cast<int>(eid));
+                        // Just update in case location changed
+                        updateSingleDriveState(eid);
+                    }
+                }
+                break;
+            }
+        }
+
+        if (!found)
+        {
+            // New drive not in state file - don't generate event, just save
+            lg2::info("New drive EID {EID} not in state file, saving state",
+                      "EID", static_cast<int>(eid));
+            updateSingleDriveState(eid);
+        }
+    }
+    catch (const std::exception& e)
+    {
+        lg2::error("Exception in checkAndGenerateDriveEvent: {ERR}", "ERR",
+                   e.what());
+    }
+}

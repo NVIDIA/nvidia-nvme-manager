@@ -27,6 +27,8 @@ This daemon provides comprehensive NVMe drive management capabilities including:
 - Real-time drive status and health monitoring
 - SMART warning detection and Redfish event generation
 - Drive association with system topology
+- **Drive State Persistence**: Automatically saves drive state (EID, location
+  code, serial number) to JSON file
 
 ### Supported Operations
 
@@ -35,6 +37,7 @@ This daemon provides comprehensive NVMe drive management capabilities including:
 - Secure erase with progress tracking
 - Link status detection
 - Form factor detection
+- Drive state tracking and persistence
 
 ### D-Bus Interfaces
 
@@ -80,14 +83,16 @@ sudo ninja -C build install
 
 Configure build options using `-D<option>=<value>`:
 
-| Option                    | Type    | Default           | Description    |
-| ------------------------- | ------- | ----------------- | -------------- |
-| `platform_drive_location` | string  | `.../Baseboard_0` | Location       |
-| `platform_drive_prefix`   | string  | `NVMe_SSD_`       | Drive prefix   |
-| `drive_sanitize_time`     | integer | 30                | Sanitize (sec) |
-| `identify_rsp_length`     | integer | 384               | Identify len   |
-| `inkernel_mctp`           | boolean | false             | In-kernel MCTP |
-| `firmware_inventory`      | boolean | false             | FW inventory   |
+| Option                    | Type    | Default            | Description |
+| ------------------------- | ------- | ------------------ | ----------- |
+| `platform_drive_location` | string  | `.../Baseboard_0`  | Location    |
+| `platform_drive_prefix`   | string  | `NVMe_SSD_`        | Drive name  |
+| `drive_sanitize_time`     | integer | 30                 | Sanitize    |
+| `identify_rsp_length`     | integer | 384                | Identify    |
+| `inkernel_mctp`           | boolean | false              | In-kernel   |
+| `firmware_inventory`      | boolean | false              | FW inv      |
+| `drive_state_file`        | string  | `/var/lib/nvidia-` | State file  |
+|                           |         | `nvme-manager/...` |             |
 
 Example:
 
@@ -230,6 +235,57 @@ is primarily done through:
 1. **Build-time options** (see Build Options section)
 2. **Entity Manager configuration** for drive topology and associations
 3. **MCTP daemon** for endpoint discovery
+
+### Drive State Persistence
+
+The daemon automatically saves drive state information to a JSON file when
+drives are discovered. The state file includes:
+
+- **EID**: MCTP Endpoint ID
+- **Location Code**: Physical location from EntityManager
+  (e.g., "NVMe E1.S Slot 0")
+- **Serial Number**: Drive serial number
+- **Connectivity**: MCTP connectivity status ("Available", "Degraded", or
+  "Unknown") - only with in-kernel MCTP
+
+**Default location**: `/var/lib/nvidia-nvme-manager/nvme_drive_state.json`
+
+**Configuration**: The file path can be customized at build time using the
+`drive_state_file` option:
+
+```bash
+meson setup build -Ddrive_state_file=/custom/path/drive_state.json
+```
+
+**Example state file**:
+
+```json
+[
+    {
+        "eid": 200,
+        "locationCode": "NVMe E1.S Slot 0",
+        "serialNumber": "S6RMNG0X502723",
+        "connectivity": "Available"
+    },
+    {
+        "eid": 201,
+        "locationCode": "NVMe E1.S Slot 1",
+        "serialNumber": "S6RMNG0X502724",
+        "connectivity": "Available"
+    }
+]
+```
+
+The state file is automatically updated when:
+
+- New drives are discovered
+- Drive information changes
+- Service restarts
+
+**Required D-Bus Interfaces**:
+
+- `xyz.openbmc_project.EntityManager` - For location code
+- `xyz.openbmc_project.NVMeDevice` - For drive asset information
 
 ## Development
 

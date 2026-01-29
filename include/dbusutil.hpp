@@ -13,6 +13,24 @@
 const std::string resourceErrorDetected{
     "ResourceEvent.1.0.ResourceErrorsDetected"};
 
+// Drive event resolution strings
+const std::string driveInsertedResolution{
+    "If the drive is not properly displayed, attempt to refresh the cached data."};
+const std::string driveRemovedResolution{
+    "If the drive is still displayed, attempt to refresh the cached data."};
+const std::string driveFailureResolution{
+    "Ensure all cables are properly and securely connected. Ensure all drives "
+    "are fully seated. Replace the defective cables, drive, or both."};
+const std::string drivePfaResolution{
+    "If this drive is not part of a fault-tolerant volume, first back up all "
+    "data, then replace the drive and restore all data afterward. If this "
+    "drive is part of a fault-tolerant volume, replace this drive as soon as "
+    "possible as long as the health is OK"};
+
+// Redfish drive path
+const std::string redfishDrivePathPrefix{
+    "/redfish/v1/Systems/System_0/Storage/1/Drives/"};
+
 // Firmware update event message IDs
 const std::string transferFailed{"Update.1.0.TransferFailed"};
 const std::string transferringToComponent{"Update.1.0.TransferringToComponent"};
@@ -22,6 +40,9 @@ const std::string awaitToActivate{"Update.1.0.AwaitToActivate"};
 const std::string applyFailed{"Update.1.0.ApplyFailed"};
 const std::string activateFailed{"Update.1.0.ActivateFailed"};
 const std::string targetDetermined{"Update.1.0.TargetDetermined"};
+// Drive hot-plug event message IDs
+const std::string driveInserted{"StorageDevice.1.0.DriveInserted"};
+const std::string driveRemoved{"StorageDevice.1.0.DriveRemoved"};
 
 using Level = sdbusplus::xyz::openbmc_project::Logging::server::Entry::Level;
 /** @brief Create the D-Bus log entry for message registry
@@ -56,6 +77,11 @@ inline void
              messageID == awaitToActivate)
     {
         addData["REDFISH_MESSAGE_ARGS"] = (arg1 + "," + arg0);
+    }
+    else if (messageID == driveInserted || messageID == driveRemoved)
+    {
+        // Drive events only use arg0 (location)
+        addData["REDFISH_MESSAGE_ARGS"] = arg0;
     }
     else
     {

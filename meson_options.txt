@@ -34,3 +34,15 @@ option(
     value: false,
     description: 'enable drive firmware inventory support',
 )
+option(
+    'drive_state_file',
+    type: 'string',
+    value: '/var/lib/nvidia-nvme-manager/nvme_drive_state.json',
+    description: 'Path to the drive state JSON file',
+)
+option(
+    'boot_progress_timeout',
+    type: 'integer',
+    value: 300,
+    description: 'Timeout in seconds to wait for OSRunning boot progress before checking for cold-removed drives (default: 300 seconds / 5 minutes)',
+)
