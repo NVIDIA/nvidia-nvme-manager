@@ -266,15 +266,20 @@ bool updateFirmwareForDevice(
                   eid);
     }
 
-    // Get the controller from the endpoint
-    nvme_mi_ctrl_t ctrl = nvme_mi_init_ctrl(ep, eid);
+    // Get the first controller from the endpoint (discovered by scan)
+    nvme_mi_ctrl_t ctrl = nvme_mi_first_ctrl(ep);
     if (ctrl == nullptr)
     {
-        lg2::error("Failed to initialize controller for EID {EID}", "EID", eid);
+        lg2::error("No controllers found for EID {EID}", "EID", eid);
         nvme_mi_close(ep);
         nvme_mi_free_root(root);
         return false;
     }
+
+    // Print controller ID (should be the actual NVMe controller ID, not EID)
+    __u16 ctrlId = nvme_mi_ctrl_id(ctrl);
+    lg2::info("EID {EID} has Controller ID: {CTRLID}", "EID", eid, "CTRLID",
+              ctrlId);
 
     // Open firmware file
     std::ifstream file(filename, std::ios::binary);
@@ -335,7 +340,6 @@ bool updateFirmwareForDevice(
         args.offset = offset;
         args.data_len = static_cast<__u32>(bytesRead);
         args.data = buffer.data();
-        lg2::debug("len: {LEN}", "LEN", args.data_len);
 
         // Firmware download with retry logic
         err = 0;
@@ -409,7 +413,7 @@ bool updateFirmwareForDevice(
     commitArgs.timeout = 0;
     commitArgs.result = nullptr;
     commitArgs.slot = firmwareSlot;
-    commitArgs.action = NVME_FW_COMMIT_CA_REPLACE;
+    commitArgs.action = NVME_FW_COMMIT_CA_REPLACE_AND_ACTIVATE;
     commitArgs.bpid = false;
     err = nvme_mi_admin_fw_commit(ctrl, &commitArgs);
     if (err != 0)
