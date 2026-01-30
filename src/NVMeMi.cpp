@@ -686,7 +686,7 @@ int getTelemetryLog(nvme_mi_ctrl_t ctrl, bool host, bool create,
 
 void NVMeMi::adminSanitize(
     uint8_t eid, nvme_sanitize_sanact sanact, uint8_t owpass,
-    uint32_t owpattern,
+    uint32_t owpattern, uint32_t sanicap,
     std::function<void(const std::error_code&, std::span<uint8_t>)>&& cb)
 {
     if (nvmeEP == nullptr)
@@ -699,7 +699,7 @@ void NVMeMi::adminSanitize(
     }
     try
     {
-        post([eid, sanact, owpass, owpattern, self{shared_from_this()},
+        post([eid, sanact, owpass, owpattern, sanicap, self{shared_from_this()},
               cb{std::move(cb)}]() {
             nvme_mi_ctrl_t ctrl = self->getController(eid);
             if (ctrl == nullptr)
@@ -711,6 +711,24 @@ void NVMeMi::adminSanitize(
                 });
                 return;
             }
+
+            // Check sanitize capabilities using passed-in sanicap
+            bool supportsCryptoErase = sanicap & NVME_CTRL_SANICAP_CES;
+            bool supportsBlockErase = sanicap & NVME_CTRL_SANICAP_BES;
+            bool supportsOverwrite = sanicap & NVME_CTRL_SANICAP_OWS;
+            bool noDeallocInhibited = sanicap & NVME_CTRL_SANICAP_NDI;
+            uint8_t nodmmas = (sanicap & NVME_CTRL_SANICAP_NODMMAS) >> 30;
+
+            // Determine if nodas can be used
+            bool canUseNodas = !noDeallocInhibited && (nodmmas != 0);
+            lg2::info(
+                "EID {EID} - Sanitize caps: CES={CES}, BES={BES}, OWS={OWS}, "
+                "NDI={NDI}, NODMMAS={NODMMAS}, canUseNodas={CANNODAS}",
+                "EID", static_cast<int>(eid), "CES", supportsCryptoErase, "BES",
+                supportsBlockErase, "OWS", supportsOverwrite, "NDI",
+                noDeallocInhibited, "NODMMAS", static_cast<int>(nodmmas),
+                "CANNODAS", canUseNodas);
+
             int rc = 0;
             std::vector<uint8_t> data(8);
             struct nvme_sanitize_nvm_args args{};
@@ -719,11 +737,10 @@ void NVMeMi::adminSanitize(
             args.args_size = sizeof(args);
             args.sanact = sanact;
             args.owpass = owpass;
-            args.nodas = true;
             args.ovrpat = owpattern;
+            args.nodas = canUseNodas; // Set based on device capabilities
             // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
             args.result = reinterpret_cast<uint32_t*>(data.data());
-
             rc = nvme_mi_admin_sanitize_nvm(ctrl, &args);
             if (rc < 0)
             {
@@ -988,10 +1005,20 @@ void NVMeMi::adminGetLogPage(
                     if (rc != 0)
                     {
                         lg2::error(
-                            "[addr:{ADDR}, eid:{EID}] fail to get sanitize status log",
+                            "[addr:{ADDR}, eid:{EID}] fail to get sanitize status log: rc={RC}, errno={ERRNO}",
                             "ADDR", self->addr, "EID",
-                            static_cast<int>(self->eid));
-                        break;
+                            static_cast<int>(self->eid), "RC", rc, "ERRNO",
+                            errno);
+                    }
+                    else
+                    {
+                        lg2::info(
+                            "EID {EID} - Sanitize log: sprog={SPROG}, sstat={SSTAT}, "
+                            "etbe={ETBE}, etbend={ETBEND}, etce={ETCE}, etcend={ETCEND}",
+                            "EID", static_cast<int>(self->eid), "SPROG",
+                            log->sprog, "SSTAT", log->sstat, "ETBE", log->etbe,
+                            "ETBEND", log->etbend, "ETCE", log->etce, "ETCEND",
+                            log->etcend);
                     }
                 }
                 break;

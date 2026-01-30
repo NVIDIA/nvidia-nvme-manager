@@ -201,7 +201,7 @@ class NVMeMiIntf
             cb) = 0;
     virtual void adminSanitize(
         uint8_t eid, nvme_sanitize_sanact sanact, uint8_t owpass,
-        uint32_t owpattern,
+        uint32_t owpattern, uint32_t sanicap,
         std::function<void(const std::error_code&, std::span<uint8_t>)>&&
             cb) = 0;
 

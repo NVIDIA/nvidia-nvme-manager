@@ -274,7 +274,7 @@ void NVMeDevice::getDriveInfo()
             saniCap.push_back(EraseMethod::CryptoErase);
         }
         self->SecureErase::sanitizeCapability(saniCap, true);
-        self->setNodmmas(id->sanicap);
+        self->setSanicap(id->sanicap); // Store full sanicap value
 
 #ifdef FIRMWARE_INVENTORY
         self->createSoftwareInventory();
@@ -723,6 +723,7 @@ void NVMeDevice::erase(uint16_t overwritePasses, EraseMethod type)
         uint32_t pattern = ~0x04030201;
         intf->adminSanitize(
             eid, NVME_SANITIZE_SANACT_START_OVERWRITE, overwritePasses, pattern,
+            sanicap, // Pass device's sanitize capabilities
             [self{shared_from_this()},
              type](const std::error_code& ec,
                    __attribute__((unused)) std::span<uint8_t> status) {
@@ -740,6 +741,7 @@ void NVMeDevice::erase(uint16_t overwritePasses, EraseMethod type)
     {
         intf->adminSanitize(
             eid, NVME_SANITIZE_SANACT_START_CRYPTO_ERASE, 0, 0,
+            sanicap, // Pass device's sanitize capabilities
             [self{shared_from_this()},
              type](const std::error_code& ec,
                    __attribute__((unused)) std::span<uint8_t> status) {
@@ -757,6 +759,7 @@ void NVMeDevice::erase(uint16_t overwritePasses, EraseMethod type)
     {
         intf->adminSanitize(
             eid, NVME_SANITIZE_SANACT_START_BLOCK_ERASE, 0, 0,
+            sanicap, // Pass device's sanitize capabilities
             [self{shared_from_this()},
              type](const std::error_code& ec,
                    __attribute__((unused)) std::span<uint8_t> status) {

@@ -116,6 +116,18 @@ class NVMeDevice :
         nodmmas = value & (0x80000000);
     }
 
+    uint32_t getSanicap() const
+    {
+        return sanicap;
+    }
+
+    void setSanicap(uint32_t value)
+    {
+        sanicap = value;
+        // Also set nodmmas for backward compatibility
+        nodmmas = value & (0x80000000);
+    }
+
     EraseMethod getEraseType()
     {
         return eraseType;
@@ -229,6 +241,7 @@ class NVMeDevice :
 
     // flag of no-deallocate modifies meida after sanitize(NODMMAS)
     uint32_t nodmmas{0};
+    uint32_t sanicap{0}; // Store full sanitize capabilities
     EraseMethod eraseType = EraseMethod::BlockErase;
     uint32_t estimatedTime{0};
 
