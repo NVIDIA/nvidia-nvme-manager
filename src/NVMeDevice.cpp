@@ -283,7 +283,7 @@ void NVMeDevice::getDriveInfo()
         // create drive events if there is new drive or swap drive found
         self->checkAndGenerateDriveEvent();
 
-        self->getDriveLink();
+        self->pollDrive();
     });
 }
 
@@ -308,7 +308,6 @@ void NVMeDevice::getDriveLink()
 
         self->PortInfo::maxSpeed(getMaxLinkSpeed(sls, mlw), true);
         self->PortInfo::currentSpeed(getCurrLinkSpeed(cls, nlw), true);
-        self->pollDrive();
     });
 }
 
@@ -595,6 +594,7 @@ void NVMeDevice::pollDrive()
             return;
         }
 
+        self->getDriveLink();
         miIntf->miSubsystemHealthStatusPoll(
             [self](__attribute__((unused)) const std::error_code& err,
                    nvme_mi_nvm_ss_health_status* ss) {
