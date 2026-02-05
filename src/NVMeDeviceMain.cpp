@@ -205,6 +205,9 @@ static void handleMCTPEndpoints(
     std::shared_ptr<sdbusplus::asio::connection>& dbusConnection,
     const ManagedObjectType& mctpEndpoints)
 {
+    // Note: Drive cleanup on power-off is handled in the host state monitor.
+    // This ensures a clean state before power-on rediscovery begins.
+
     for (const auto& [path, epData] : mctpEndpoints)
     {
         bool nvmeCap = false;
@@ -1078,14 +1081,16 @@ int main()
         });
         matches.emplace_back(std::move(bootProgressMatch));
 
-        // Monitor host power state to reset cold-removal check on power-off
+        // Monitor host power state to clean up drives on power-off
+        // NVMe drives are power-on devices and must be reinitialized after
+        // power cycle
         auto hostStateMatch = std::make_unique<sdbusplus::bus::match::match>(
             static_cast<sdbusplus::bus::bus&>(*bus),
             "type='signal',interface='org.freedesktop.DBus.Properties',"
             "member='PropertiesChanged',"
             "path='/xyz/openbmc_project/state/host0',"
             "arg0='xyz.openbmc_project.State.Host'",
-            [bootProgressTimer](sdbusplus::message::message& msg) {
+            [bootProgressTimer, &io](sdbusplus::message::message& msg) {
             std::string interfaceName;
             std::map<std::string, std::variant<std::string>> changedProperties;
 
@@ -1100,14 +1105,45 @@ int main()
                     lg2::info("Host state changed to: {STATE}", "STATE",
                               hostState);
 
-                    // Reset cold-removal check flag when host powers off
+                    // Clean up all drives when host powers off
                     // xyz.openbmc_project.State.Host.HostState.Off
                     if (hostState.find("Off") != std::string::npos)
                     {
-                        lg2::info(
-                            "Host powered off, resetting cold-removal check state");
+                        lg2::info("Host powered off, cleaning up NVMe drives");
+
+                        auto& driveMap = getDriveMap();
+                        if (!driveMap.empty())
+                        {
+                            lg2::info(
+                                "Cancelling operations and removing {COUNT} drive(s)",
+                                "COUNT", driveMap.size());
+
+                            // Cancel all pending async operations to release
+                            // shared_ptr references
+                            for (auto& [eid, drive] : driveMap)
+                            {
+                                lg2::debug(
+                                    "Cancelling pending operations for drive EID {EID}",
+                                    "EID", eid);
+                                drive->cancelPendingOperations();
+                            }
+
+                            // Clear the map - this destroys NVMeDevice objects
+                            // and unregisters D-Bus vtables
+                            driveMap.clear();
+
+                            // Process any pending I/O operations to ensure
+                            // all destructors complete and D-Bus
+                            // unregistrations finish
+                            io.poll();
+
+                            lg2::info("All drives cleaned up successfully");
+                        }
+
+                        // Reset cold-removal check state
                         getColdRemovalCheckComplete() = false;
                         getDiscoveredDriveEids().clear();
+                        
                         // Cancel boot progress timer to prevent unnecessary
                         // cold-removal check
                         bootProgressTimer->cancel();

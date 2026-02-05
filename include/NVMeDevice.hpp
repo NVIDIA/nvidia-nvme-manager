@@ -190,6 +190,13 @@ class NVMeDevice :
         return connectivityDegraded;
     }
 
+    // Cleanup method to cancel all pending async operations
+    void cancelPendingOperations()
+    {
+        scanTimer.cancel();
+        initRetryTimer.cancel();
+    }
+
     bool backupDeviceFault(bool value) override
     {
         backupDeviceErr = value;
