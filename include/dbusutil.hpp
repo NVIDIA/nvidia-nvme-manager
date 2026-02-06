@@ -7,7 +7,9 @@
 #include <sdbusplus/exception.hpp>
 #include <xyz/openbmc_project/Logging/Entry/server.hpp>
 
+#include <map>
 #include <memory>
+#include <mutex>
 #include <string>
 
 const std::string resourceErrorDetected{
@@ -45,20 +47,42 @@ const std::string driveInserted{"StorageDevice.1.0.DriveInserted"};
 const std::string driveRemoved{"StorageDevice.1.0.DriveRemoved"};
 
 using Level = sdbusplus::xyz::openbmc_project::Logging::server::Entry::Level;
+
+/** @brief Get the D-Bus mutex for protecting D-Bus operations
+ *
+ * This function returns a reference to a static mutex used to protect D-Bus
+ * operations from parallel threads. This prevents race conditions when multiple
+ * parallel threads attempt to create log entries simultaneously through a
+ * shared D-Bus connection.
+ *
+ * @return Reference to the static D-Bus mutex
+ */
+inline std::mutex& getDbusMutex()
+{
+    static std::mutex dbusMutex;
+    return dbusMutex;
+}
+
 /** @brief Create the D-Bus log entry for message registry
  *
+ *  @param[in] conn - D-Bus connection
  *  @param[in] messageID - Message ID
+ *  @param[in] level - Log level
  *  @param[in] arg0 - argument 0
  *  @param[in] arg1 - argument 1
  *  @param[in] resolution - Resolution field
- *  @param[in] logNamespace - Logging namespace, default is FWUpdate
+ *  @param[in] ooc - Origin of condition
+ *  @param[in] logNamespace - Logging namespace, default is StorageDevice
+ *  @param[in] blocking - If true, use synchronous D-Bus call (for CLI tools);
+ *                        if false, use async (default for daemons)
  */
 inline void
     createLogEntry(const std::shared_ptr<sdbusplus::asio::connection>& conn,
                    const std::string& messageID, const Level& level,
                    const std::string& arg0, const std::string& arg1,
                    const std::string& resolution, const std::string& ooc,
-                   const std::string& logNamespace = "StorageDevice")
+                   const std::string& logNamespace = "StorageDevice",
+                   bool blocking = false)
 {
     using namespace sdbusplus::xyz::openbmc_project::Logging::server;
 
@@ -80,7 +104,6 @@ inline void
     }
     else if (messageID == driveInserted || messageID == driveRemoved)
     {
-        // Drive events only use arg0 (location)
         addData["REDFISH_MESSAGE_ARGS"] = arg0;
     }
     else
@@ -100,18 +123,39 @@ inline void
         addData["namespace"] = logNamespace;
     }
 
-    auto severity =
-        sdbusplus::xyz::openbmc_project::Logging::server::convertForMessage(
-            level);
-    conn->async_method_call(
-        [](boost::system::error_code ec) {
-        if (ec)
+    auto severity = convertForMessage(level);
+
+    std::lock_guard<std::mutex> lock(getDbusMutex());
+
+    if (blocking)
+    {
+        try
         {
-            lg2::error("error while logging message registry: {ERROR_MESSAGE}",
-                       "ERROR_MESSAGE", ec.message());
-            return;
+            auto method = conn->new_method_call(
+                "xyz.openbmc_project.Logging", "/xyz/openbmc_project/logging",
+                "xyz.openbmc_project.Logging.Create", "Create");
+            method.append(messageID, severity, addData);
+            conn->call(method);
         }
-    }, "xyz.openbmc_project.Logging", "/xyz/openbmc_project/logging",
-        "xyz.openbmc_project.Logging.Create", "Create", messageID, severity,
-        addData);
+        catch (const sdbusplus::exception::SdBusError& e)
+        {
+            lg2::warning(
+                "Failed to create log entry for message {MESSAGEID}: {ERROR}",
+                "MESSAGEID", messageID, "ERROR", e.what());
+        }
+    }
+    else
+    {
+        conn->async_method_call(
+            [messageID](boost::system::error_code ec) {
+            if (ec)
+            {
+                lg2::warning(
+                    "Failed to create log entry for message {MESSAGEID}: {ERROR_MESSAGE}",
+                    "MESSAGEID", messageID, "ERROR_MESSAGE", ec.message());
+            }
+        }, "xyz.openbmc_project.Logging", "/xyz/openbmc_project/logging",
+            "xyz.openbmc_project.Logging.Create", "Create", messageID, severity,
+            addData);
+    }
 }

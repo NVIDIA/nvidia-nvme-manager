@@ -15,6 +15,7 @@
 #include <future>
 #include <iostream>
 #include <memory>
+#include <mutex>
 #include <span>
 #include <sstream>
 #include <thread>
@@ -42,10 +43,6 @@ constexpr int retryDelayMs = 100; // 100ms delay between retries
 constexpr int maxFirmwareDownloadRetries = 3;
 constexpr int retryDelayMsFirmware = 100; // 100ms delay between retries
 
-// Log completion timeout
-constexpr int logCompletionTimeoutMs =
-    200; // Time to wait for async D-Bus log calls to complete
-
 using Level = sdbusplus::xyz::openbmc_project::Logging::server::Entry::Level;
 
 // Additional firmware update event logging functions
@@ -58,7 +55,7 @@ void logTransferFailed(const std::shared_ptr<sdbusplus::asio::connection>& conn,
         "Check network connectivity and device availability. "
         "Ensure the firmware file is accessible and not corrupted.";
     createLogEntry(conn, transferFailed, Level::Error, deviceInfo, version,
-                   resolution, objectPath, "FWUpdate");
+                   resolution, objectPath, "FWUpdate", true);
 }
 
 void logTransferringToComponent(
@@ -67,7 +64,7 @@ void logTransferringToComponent(
     const std::string& objectPath)
 {
     createLogEntry(conn, transferringToComponent, Level::Informational,
-                   deviceInfo, version, "", objectPath, "FWUpdate");
+                   deviceInfo, version, "", objectPath, "FWUpdate", true);
 }
 
 void logVerificationFailed(
@@ -79,7 +76,7 @@ void logVerificationFailed(
         "Verify the firmware file integrity and compatibility. "
         "Ensure the firmware is signed and compatible with the device.";
     createLogEntry(conn, verificationFailed, Level::Error, deviceInfo, version,
-                   resolution, objectPath, "FWUpdate");
+                   resolution, objectPath, "FWUpdate", true);
 }
 
 void logUpdateSuccessful(
@@ -88,7 +85,7 @@ void logUpdateSuccessful(
     const std::string& objectPath)
 {
     createLogEntry(conn, updateSuccessful, Level::Informational, deviceInfo,
-                   version, "", objectPath, "FWUpdate");
+                   version, "", objectPath, "FWUpdate", true);
 }
 
 void logAwaitToActivate(
@@ -97,7 +94,7 @@ void logAwaitToActivate(
     const std::string& objectPath)
 {
     createLogEntry(conn, awaitToActivate, Level::Informational, deviceInfo,
-                   version, "", objectPath, "FWUpdate");
+                   version, "", objectPath, "FWUpdate", true);
 }
 
 void logApplyFailed(const std::shared_ptr<sdbusplus::asio::connection>& conn,
@@ -108,7 +105,7 @@ void logApplyFailed(const std::shared_ptr<sdbusplus::asio::connection>& conn,
         "Check device status and available space. "
         "Ensure the device is not in use and has sufficient storage.";
     createLogEntry(conn, applyFailed, Level::Error, deviceInfo, version,
-                   resolution, objectPath, "FWUpdate");
+                   resolution, objectPath, "FWUpdate", true);
 }
 
 void logActivateFailed(const std::shared_ptr<sdbusplus::asio::connection>& conn,
@@ -120,7 +117,7 @@ void logActivateFailed(const std::shared_ptr<sdbusplus::asio::connection>& conn,
         "Check device compatibility and firmware validation. "
         "Ensure the firmware is compatible and properly signed.";
     createLogEntry(conn, activateFailed, Level::Error, deviceInfo, version,
-                   resolution, objectPath, "FWUpdate");
+                   resolution, objectPath, "FWUpdate", true);
 }
 
 void logTargetDetermined(
@@ -129,7 +126,7 @@ void logTargetDetermined(
     const std::string& objectPath)
 {
     createLogEntry(conn, targetDetermined, Level::Informational, deviceInfo,
-                   version, "", objectPath, "FWUpdate");
+                   version, "", objectPath, "FWUpdate", true);
 }
 
 void logNoMatchingDevices(
@@ -141,17 +138,7 @@ void logNoMatchingDevices(
         "Verify the FW package has devices that are listed in the"
         " Redfish FW Inventory";
     createLogEntry(conn, resourceErrorDetected, Level::Error, serviceName,
-                   errorDescription, resolution, "", "FWUpdate");
-}
-
-// Helper function to ensure async log entries complete before exit
-// Processes the I/O context for a reasonable duration to allow async
-// D-Bus calls to complete
-void ensureLogCompletion(const std::shared_ptr<boost::asio::io_context>& io)
-{
-    // run_for() processes handlers for the specified duration
-    // This gives async D-Bus calls time to complete
-    io->run_for(std::chrono::milliseconds(logCompletionTimeoutMs));
+                   errorDescription, resolution, "", "FWUpdate", true);
 }
 
 void printUsage(const char* programName)
@@ -521,9 +508,8 @@ int main(int argc, char* argv[])
             lg2::error(
                 "Error: At least one EID is required - no matching devices found");
 
-            // Create Redfish event log for no matching devices
+            // Create Redfish event log for no matching devices (blocking)
             logNoMatchingDevices(conn);
-            ensureLogCompletion(io);
 
             return 1;
         }
@@ -568,7 +554,9 @@ int main(int argc, char* argv[])
             }
             eidStream << static_cast<int>(eids[i]);
         }
-        lg2::info("Target EIDs: {EIDS}", "EIDS", eidStream.str());
+        std::string eidString =
+            eidStream.str(); // Store in a variable with proper lifetime
+        lg2::info("Target EIDs: {EIDS}", "EIDS", eidString);
 
         // Launch parallel firmware updates using std::async
         std::vector<std::future<bool>> futures;
@@ -614,9 +602,6 @@ int main(int argc, char* argv[])
                 overallSuccess = false;
             }
         }
-
-        // Ensure all async log entries complete before exit
-        ensureLogCompletion(io);
 
         if (overallSuccess)
         {
