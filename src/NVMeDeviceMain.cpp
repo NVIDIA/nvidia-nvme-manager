@@ -1143,7 +1143,7 @@ int main()
                         // Reset cold-removal check state
                         getColdRemovalCheckComplete() = false;
                         getDiscoveredDriveEids().clear();
-                        
+
                         // Cancel boot progress timer to prevent unnecessary
                         // cold-removal check
                         bootProgressTimer->cancel();

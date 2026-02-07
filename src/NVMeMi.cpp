@@ -57,8 +57,8 @@ NVMeMi::NVMeMi(boost::asio::io_context& io,
 
 #ifdef INKERNEL_MCTP
     (void)addr; // avoid unused variable warning
-    lg2::info("Opening MCTP socket: net={NET}, eid={EID}",
-              "NET", net, "EID", static_cast<int>(eid));
+    lg2::info("Opening MCTP socket: net={NET}, eid={EID}", "NET", net, "EID",
+              static_cast<int>(eid));
     nvmeEP = nvme_mi_open_mctp(nvmeRoot, net, eid);
 #else
     std::string sockNameStr(addr.begin(), addr.end());
@@ -118,9 +118,8 @@ NVMeMi::~NVMeMi()
 {
     if (nvmeEP != nullptr)
     {
-        lg2::info(
-            "Closing MCTP socket: net={NET}, eid={EID}, addr={ADDR}",
-            "NET", net, "EID", static_cast<int>(eid), "ADDR", addr);
+        lg2::info("Closing MCTP socket: net={NET}, eid={EID}, addr={ADDR}",
+                  "NET", net, "EID", static_cast<int>(eid), "ADDR", addr);
         nvme_mi_close(nvmeEP);
         nvmeEP = nullptr;
     }

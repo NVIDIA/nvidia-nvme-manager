@@ -362,19 +362,19 @@ void NVMeDevice::queryController()
                 std::chrono::milliseconds(delayMs));
             self->initRetryTimer.async_wait(
                 [self](const boost::system::error_code& timerEc) {
-                    if (timerEc == boost::asio::error::operation_aborted)
-                    {
-                        return; // Timer was cancelled
-                    }
-                    if (timerEc)
-                    {
-                        lg2::error("Init retry timer error: {MSG}", "MSG",
-                                   timerEc.message());
-                        return;
-                    }
-                    self->initRetryCount++;
-                    self->queryController();
-                });
+                if (timerEc == boost::asio::error::operation_aborted)
+                {
+                    return; // Timer was cancelled
+                }
+                if (timerEc)
+                {
+                    lg2::error("Init retry timer error: {MSG}", "MSG",
+                               timerEc.message());
+                    return;
+                }
+                self->initRetryCount++;
+                self->queryController();
+            });
             return;
         }
 
