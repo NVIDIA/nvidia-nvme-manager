@@ -57,6 +57,8 @@ NVMeMi::NVMeMi(boost::asio::io_context& io,
 
 #ifdef INKERNEL_MCTP
     (void)addr; // avoid unused variable warning
+    lg2::info("Opening MCTP socket: net={NET}, eid={EID}", "NET", net, "EID",
+              static_cast<int>(eid));
     nvmeEP = nvme_mi_open_mctp(nvmeRoot, net, eid);
 #else
     std::string sockNameStr(addr.begin(), addr.end());
@@ -112,7 +114,16 @@ NVMeMi::Worker::~Worker()
     }
     thread.join();
 }
-NVMeMi::~NVMeMi() = default;
+NVMeMi::~NVMeMi()
+{
+    if (nvmeEP != nullptr)
+    {
+        lg2::info("Closing MCTP socket: net={NET}, eid={EID}, addr={ADDR}",
+                  "NET", net, "EID", static_cast<int>(eid), "ADDR", addr);
+        nvme_mi_close(nvmeEP);
+        nvmeEP = nullptr;
+    }
+}
 
 nvme_mi_ctrl_t NVMeMi::getController(uint8_t eid)
 {
@@ -348,36 +359,14 @@ void NVMeMi::miScanCtrl(std::function<void(const std::error_code&,
     try
     {
         post([self{shared_from_this()}, cb{std::move(cb)}]() {
-            int rc = 0;
-            const int maxRetries = 3;
-            const int delayMs = 100;
-
-            for (int retry = 0; retry <= maxRetries; ++retry)
-            {
-                rc = nvme_mi_scan_ep(self->nvmeEP, true);
-                if (rc == 0)
-                {
-                    // Success, break out of retry loop
-                    break;
-                }
-
-                if (retry < maxRetries)
-                {
-                    lg2::info(
-                        "[addr:{ADDR}, eid:{EID}] scan attempt {RETRY} failed, retrying in {DELAY}ms",
-                        "ADDR", self->addr, "EID", static_cast<int>(self->eid),
-                        "RETRY", retry + 1, "DELAY", delayMs);
-                    std::this_thread::sleep_for(
-                        std::chrono::milliseconds(delayMs));
-                }
-            }
+            int rc = nvme_mi_scan_ep(self->nvmeEP, true);
 
             if (rc < 0)
             {
                 lg2::error(
-                    "[addr:{ADDR}, eid:{EID}] fail to scan controllers after {RETRIES} attempts:{ERR}",
+                    "[addr:{ADDR}, eid:{EID}] fail to scan controllers:{ERR}",
                     "ADDR", self->addr, "EID", static_cast<int>(self->eid),
-                    "RETRIES", maxRetries + 1, "ERR", std::strerror(errno));
+                    "ERR", std::strerror(errno));
                 boost::asio::post(self->io, [cb{cb}, lastErrno{errno}]() {
                     cb(std::make_error_code(static_cast<std::errc>(lastErrno)),
                        {});
@@ -389,9 +378,9 @@ void NVMeMi::miScanCtrl(std::function<void(const std::error_code&,
                 std::string_view errMsg =
                     statusToString(static_cast<nvme_mi_resp_status>(rc));
                 lg2::error(
-                    "[addr:{ADDR}, eid:{EID}] fail to scan controllers after {RETRIES} attempts: {MSG}",
+                    "[addr:{ADDR}, eid:{EID}] fail to scan controllers: {MSG}",
                     "ADDR", self->addr, "EID", static_cast<int>(self->eid),
-                    "RETRIES", maxRetries + 1, "MSG", errMsg);
+                    "MSG", errMsg);
                 boost::asio::post(self->io, [cb{cb}]() {
                     cb(std::make_error_code(std::errc::bad_message), {});
                 });
