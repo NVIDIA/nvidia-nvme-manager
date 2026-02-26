@@ -219,6 +219,10 @@ void NVMeDevice::getDriveInfo()
                                    std::span<uint8_t> data) {
         if (ec)
         {
+            if (self->operationsCancelled)
+            {
+                return;
+            }
             // Identify command's length is up to 4K. There's possibility
             // to get I2C transcation timeout during the transmission.
             // Implement retry method.
@@ -340,6 +344,10 @@ void NVMeDevice::queryController()
                          const std::vector<nvme_mi_ctrl_t>& ctrlList) mutable {
         if (ec || ctrlList.empty())
         {
+            if (self->operationsCancelled)
+            {
+                return;
+            }
             if (self->initRetryCount >= maxRetries)
             {
                 lg2::error(
@@ -370,6 +378,10 @@ void NVMeDevice::queryController()
                 {
                     lg2::error("Init retry timer error: {MSG}", "MSG",
                                timerEc.message());
+                    return;
+                }
+                if (self->operationsCancelled)
+                {
                     return;
                 }
                 self->initRetryCount++;
@@ -521,6 +533,10 @@ void NVMeDevice::updatePercent(uint32_t endTime)
 
 void NVMeDevice::pollDrive()
 {
+    if (operationsCancelled)
+    {
+        return;
+    }
     scanTimer.expires_after(std::chrono::seconds(pollInterval));
     scanTimer.async_wait(
         [weak{weak_from_this()}](const boost::system::error_code errorCode) {
