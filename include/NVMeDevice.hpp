@@ -190,9 +190,11 @@ class NVMeDevice :
         return connectivityDegraded;
     }
 
-    // Cleanup method to cancel all pending async operations
+    // Cleanup method to cancel all pending async operations and prevent
+    // in-flight callbacks (e.g. miScanCtrl) from scheduling new timers.
     void cancelPendingOperations()
     {
+        operationsCancelled = true;
         scanTimer.cancel();
         initRetryTimer.cancel();
     }
@@ -248,6 +250,7 @@ class NVMeDevice :
     int net;
     uint8_t retry{1};
     int initRetryCount{0};
+    bool operationsCancelled{false};
 
     // flag of no-deallocate modifies meida after sanitize(NODMMAS)
     uint32_t nodmmas{0};

@@ -793,9 +793,32 @@ static void checkForColdRemovedDrives(
     }
 }
 
+/**
+ * Defer destructor and io.poll to a posted task so D-Bus unregister runs
+ * outside any D-Bus callback. Cancel and erase from map (non-post), then
+ * post destroy.
+ */
+static void deferredDestroyDrive(
+    boost::asio::io_context& io,
+    std::unordered_map<uint8_t, std::shared_ptr<NVMeDevice>>& driveMap,
+    std::unordered_map<uint8_t, std::shared_ptr<NVMeDevice>>::iterator driveIt)
+{
+    uint8_t eidVal = driveIt->first;
+    driveIt->second->cancelPendingOperations();
+    auto keepAlive = driveIt->second;
+    driveMap.erase(driveIt);
+    lg2::info("Drive EID {EID} removed from driveMap, posting destroy", "EID",
+              static_cast<int>(eidVal));
+    boost::asio::post(io, [keepAlive, &io]() mutable {
+        keepAlive.reset();
+        io.poll();
+    });
+}
+
 static void
     interfaceRemoved(sdbusplus::message::message& message,
-                     const std::shared_ptr<sdbusplus::asio::connection>& conn)
+                     const std::shared_ptr<sdbusplus::asio::connection>& conn,
+                     boost::asio::io_context& io)
 {
     if (message.is_method_error())
     {
@@ -834,6 +857,8 @@ static void
             return;
         }
         eid_t eid = eidOpt.value();
+        lg2::info("InterfacesRemoved: path {PATH} EID {EID}", "PATH",
+                  objectPath.str, "EID", static_cast<int>(eid));
 
         // If power off, remove from driveMap but don't generate events
         if (isHostOff(conn))
@@ -845,7 +870,7 @@ static void
                 lg2::info(
                     "Drive EID {EID} endpoint removed during host power-off, removing from driveMap",
                     "EID", static_cast<int>(eid));
-                driveMap.erase(driveIt);
+                deferredDestroyDrive(io, driveMap, driveIt);
             }
             return;
         }
@@ -885,10 +910,7 @@ static void
         // comparison)
         markDriveAsRemoved(eid);
 
-        // Remove from driveMap (runtime cleanup)
-        driveMap.erase(driveIt);
-        lg2::info("Drive EID {EID} removed from driveMap", "EID",
-                  static_cast<int>(eid));
+        deferredDestroyDrive(io, driveMap, driveIt);
     }
     catch (const sdbusplus::exception::SdBusError& e)
     {
@@ -994,9 +1016,9 @@ int main()
             static_cast<sdbusplus::bus::bus&>(*bus),
             "type='signal',member='InterfacesRemoved',arg0path='" +
                 std::string(mctpEpsPath) + "/'",
-            [&filterTimer, bus](sdbusplus::message::message& msg) {
+            [&filterTimer, bus, &io](sdbusplus::message::message& msg) {
             filterTimer.cancel();
-            interfaceRemoved(msg, bus);
+            interfaceRemoved(msg, bus, io);
         });
         matches.emplace_back(std::move(ifaceRemovedMatch));
 
@@ -1105,8 +1127,9 @@ int main()
                     lg2::info("Host state changed to: {STATE}", "STATE",
                               hostState);
 
-                    // Clean up all drives when host powers off
-                    // xyz.openbmc_project.State.Host.HostState.Off
+                    // Clean up all drives when host powers off. Erase from map
+                    // in callback; destroy each drive in a posted task so
+                    // D-Bus unregister runs outside this callback.
                     if (hostState.find("Off") != std::string::npos)
                     {
                         lg2::info("Host powered off, cleaning up NVMe drives");
@@ -1114,30 +1137,11 @@ int main()
                         auto& driveMap = getDriveMap();
                         if (!driveMap.empty())
                         {
-                            lg2::info(
-                                "Cancelling operations and removing {COUNT} drive(s)",
-                                "COUNT", driveMap.size());
-
-                            // Cancel all pending async operations to release
-                            // shared_ptr references
-                            for (auto& [eid, drive] : driveMap)
+                            for (auto it = driveMap.begin();
+                                 it != driveMap.end();)
                             {
-                                lg2::debug(
-                                    "Cancelling pending operations for drive EID {EID}",
-                                    "EID", eid);
-                                drive->cancelPendingOperations();
+                                deferredDestroyDrive(io, driveMap, it++);
                             }
-
-                            // Clear the map - this destroys NVMeDevice objects
-                            // and unregisters D-Bus vtables
-                            driveMap.clear();
-
-                            // Process any pending I/O operations to ensure
-                            // all destructors complete and D-Bus
-                            // unregistrations finish
-                            io.poll();
-
-                            lg2::info("All drives cleaned up successfully");
                         }
 
                         // Reset cold-removal check state
