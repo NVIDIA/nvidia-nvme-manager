@@ -1,4 +1,6 @@
 #pragma once
+#include <nvme/types.h>
+
 #include <NVMeMi.hpp>
 #include <SoftwareInventoryManager.hpp>
 #include <boost/asio/io_context.hpp>
@@ -23,6 +25,8 @@
 #include <xyz/openbmc_project/Software/Version/server.hpp>
 #include <xyz/openbmc_project/State/Decorator/Health/server.hpp>
 #include <xyz/openbmc_project/State/Decorator/OperationalStatus/server.hpp>
+
+#include <functional>
 
 using Item = sdbusplus::xyz::openbmc_project::Inventory::server::Item;
 using Drive = sdbusplus::xyz::openbmc_project::Inventory::Item::server::Drive;
@@ -225,6 +229,15 @@ class NVMeDevice :
         return value;
     }
 
+    /** Register updater for temp/status sensors.
+     *  When set, poll interval uses pollIntervalSec instead of default 5s. */
+    void setSensorsUpdater(
+        std::function<void(nvme_mi_nvm_ss_health_status*)> updater,
+        float pollIntervalSec);
+
+    /** Clear sensors updater when sensors are removed. */
+    void clearSensorsUpdater();
+
   private:
     std::shared_ptr<sdbusplus::asio::connection> conn;
     sdbusplus::asio::object_server& objServer;
@@ -270,6 +283,12 @@ class NVMeDevice :
 
     // MCTP connectivity state
     bool connectivityDegraded{false};
+
+    // Sensor integration: when set, poll at sensorPollIntervalSec and
+    // notify updater with health data for temp/status sensors (nullptr on
+    // error)
+    std::function<void(nvme_mi_nvm_ss_health_status*)> sensorsUpdater;
+    float sensorPollIntervalSec{0};
 };
 
 // Drive state management function

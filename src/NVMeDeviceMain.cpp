@@ -2,6 +2,9 @@
 
 #include <MCTPDiscovery.hpp>
 #include <NVMeDevice.hpp>
+#ifdef NVME_MI_SENSORS
+#include <sensors/NVMeMiSensorManager.hpp>
+#endif
 #include <boost/asio/steady_timer.hpp>
 #include <dbusutil.hpp>
 #include <nlohmann/json.hpp>
@@ -36,6 +39,14 @@ std::unordered_map<uint8_t, std::shared_ptr<NVMeDevice>>& getDriveMap()
     static std::unordered_map<uint8_t, std::shared_ptr<NVMeDevice>> driveMap{};
     return driveMap;
 }
+
+#ifdef NVME_MI_SENSORS
+static std::unique_ptr<NVMeMiSensorManager>& getSensorManager()
+{
+    static std::unique_ptr<NVMeMiSensorManager> sensorManager;
+    return sensorManager;
+}
+#endif
 
 std::set<uint8_t>& getDiscoveredDriveEids()
 {
@@ -205,9 +216,6 @@ static void handleMCTPEndpoints(
     std::shared_ptr<sdbusplus::asio::connection>& dbusConnection,
     const ManagedObjectType& mctpEndpoints)
 {
-    // Note: Drive cleanup on power-off is handled in the host state monitor.
-    // This ensures a clean state before power-on rediscovery begins.
-
     for (const auto& [path, epData] : mctpEndpoints)
     {
         bool nvmeCap = false;
@@ -292,6 +300,19 @@ static void handleMCTPEndpoints(
 
             // put drive object to map in order to implement drive removal.
             driveMap.emplace(eid, drivePtr);
+
+#ifdef NVME_MI_SENSORS
+            // Create sensor manager on first drive add; create sensors for
+            // every newly added drive. createSensors() uses cached config when
+            // available, or loads EM config async and creates sensors for all
+            // pending EIDs.
+            if (!getSensorManager())
+            {
+                getSensorManager() = std::make_unique<NVMeMiSensorManager>(
+                    objectServer, dbusConnection);
+            }
+            getSensorManager()->createSensors(eid);
+#endif
         }
         else
         {
@@ -805,6 +826,13 @@ static void deferredDestroyDrive(
 {
     uint8_t eidVal = driveIt->first;
     driveIt->second->cancelPendingOperations();
+    driveIt->second->clearSensorsUpdater();
+#ifdef NVME_MI_SENSORS
+    if (getSensorManager())
+    {
+        getSensorManager()->removeSensors(eidVal);
+    }
+#endif
     auto keepAlive = driveIt->second;
     driveMap.erase(driveIt);
     lg2::info("Drive EID {EID} removed from driveMap, posting destroy", "EID",
@@ -931,6 +959,7 @@ int main()
         auto bus = std::make_shared<sdbusplus::asio::connection>(io);
         sdbusplus::asio::object_server objectServer(bus, true);
         objectServer.add_manager("/xyz/openbmc_project/inventory/system/nvme");
+        objectServer.add_manager("/xyz/openbmc_project/sensors");
 #ifdef FIRMWARE_INVENTORY
         objectServer.add_manager("/xyz/openbmc_project/software");
 #endif
