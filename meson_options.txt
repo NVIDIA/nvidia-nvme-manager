@@ -35,6 +35,12 @@ option(
     description: 'enable drive firmware inventory support',
 )
 option(
+    'nvme_mi_sensors',
+    type: 'boolean',
+    value: true,
+    description: 'enable NVMe-MI temperature and status sensors',
+)
+option(
     'drive_state_file',
     type: 'string',
     value: '/var/lib/nvidia-nvme-manager/nvme_drive_state.json',

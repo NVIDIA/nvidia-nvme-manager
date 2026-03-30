@@ -18,6 +18,9 @@ inkernel_mctp = get_option('inkernel_mctp')
 # Get the firmware inventory option
 firmware_inventory = get_option('firmware_inventory')
 
+# Get the NVMe-MI sensors option
+nvme_mi_sensors = get_option('nvme_mi_sensors')
+
 # Get the platform drive prefix
 platform_drive_prefix = get_option('platform_drive_prefix')
 
@@ -43,6 +46,11 @@ endif
 # Add FIRMWARE_INVENTORY define based on the option
 if firmware_inventory
     add_project_arguments('-DFIRMWARE_INVENTORY', language: 'cpp')
+endif
+
+# Add NVME_MI_SENSORS define based on the option
+if nvme_mi_sensors
+    add_project_arguments('-DNVME_MI_SENSORS', language: 'cpp')
 endif
 
 # Add PLATFORM_DRIVE_PREFIX define

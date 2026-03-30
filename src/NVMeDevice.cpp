@@ -531,13 +531,31 @@ void NVMeDevice::updatePercent(uint32_t endTime)
     setEstimateTime(time);
 }
 
+void NVMeDevice::setSensorsUpdater(
+    std::function<void(nvme_mi_nvm_ss_health_status*)> updater,
+    float pollIntervalSec)
+{
+    sensorsUpdater = std::move(updater);
+    sensorPollIntervalSec = pollIntervalSec;
+}
+
+void NVMeDevice::clearSensorsUpdater()
+{
+    sensorsUpdater = nullptr;
+    sensorPollIntervalSec = 0;
+}
+
 void NVMeDevice::pollDrive()
 {
     if (operationsCancelled)
     {
         return;
     }
-    scanTimer.expires_after(std::chrono::seconds(pollInterval));
+    auto intervalSec = (sensorPollIntervalSec > 0)
+                           ? sensorPollIntervalSec
+                           : static_cast<float>(pollInterval);
+    scanTimer.expires_after(
+        std::chrono::milliseconds(static_cast<int>(intervalSec * 1000)));
     scanTimer.async_wait(
         [weak{weak_from_this()}](const boost::system::error_code errorCode) {
         // Try to lock weak_ptr to get shared_ptr
@@ -667,6 +685,10 @@ void NVMeDevice::pollDrive()
                 lg2::error("fail to query SubSystemHealthPoll for the nvme "
                            "subsystem {ERR}:{MSG}",
                            "ERR", err.value(), "MSG", err.message());
+                if (self->sensorsUpdater)
+                {
+                    self->sensorsUpdater(nullptr);
+                }
                 return;
             }
             self->NVMeStatus::driveLifeUsed(std::to_string(ss->pdlu), true);
@@ -677,6 +699,11 @@ void NVMeDevice::pollDrive()
                 Drive::predictedMediaLifeLeftPercent(100 - percentage, true);
 
             self->markFunctional((ss->nss & 0x20) != 0);
+
+            if (self->sensorsUpdater)
+            {
+                self->sensorsUpdater(ss);
+            }
         });
 
         // change the nsid to 0 for new version of libnvme

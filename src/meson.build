@@ -1,4 +1,13 @@
 nvme_srcs = files('NVMeDevice.cpp', 'NVMeDeviceMain.cpp', 'NVMeMi.cpp')
+if get_option('nvme_mi_sensors')
+    nvme_srcs += files(
+        'sensors/GetSensorConfiguration.cpp',
+        'sensors/NVMeMiSensor.cpp',
+        'sensors/NVMeMiSensorManager.cpp',
+        'sensors/NVMeMiStatusSensor.cpp',
+        'sensors/Thresholds.cpp',
+    )
+endif
 
 nvme_deps = [default_deps, threads]
 
@@ -7,7 +16,7 @@ executable(
     sources: nvme_srcs,
     dependencies: nvme_deps,
     implicit_include_directories: false,
-    include_directories: '../include',
+    include_directories: ['../include', '../include/sensors'],
     cpp_args: [
         '-frtti',
         '-UBOOST_ASIO_NO_DEPRECATED',
