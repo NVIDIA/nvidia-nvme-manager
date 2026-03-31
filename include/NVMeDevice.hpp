@@ -238,6 +238,10 @@ class NVMeDevice :
     /** Clear sensors updater when sensors are removed. */
     void clearSensorsUpdater();
 
+    /** Set Progress interface for firmware update (Status and Progress 0-100).
+     *  Used by nvme-manager FW update handler to report update state. */
+    void setFwUpdateProgress(uint32_t percent, OperationStatus status);
+
   private:
     std::shared_ptr<sdbusplus::asio::connection> conn;
     sdbusplus::asio::object_server& objServer;

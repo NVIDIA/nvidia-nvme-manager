@@ -196,7 +196,7 @@ class NVMeMiIntf
                                                   nvme_status_field)>&& cb) = 0;
 
     virtual void adminFwDownload(
-        uint8_t eid, uint32_t offset, uint32_t dataLen, std::span<uint8_t> data,
+        uint8_t eid, uint32_t offset, uint32_t dataLen, std::vector<char> data,
         std::function<void(const std::error_code&, nvme_status_field)>&&
             cb) = 0;
     virtual void adminSanitize(

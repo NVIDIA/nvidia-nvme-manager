@@ -4,6 +4,8 @@
 #include <sdbusplus/asio/object_server.hpp>
 #include <sdbusplus/bus.hpp>
 
+#include <memory>
+#include <mutex>
 #include <thread>
 
 class NVMeMi : public NVMeMiIntf, public std::enable_shared_from_this<NVMeMi>
@@ -51,7 +53,7 @@ class NVMeMi : public NVMeMiIntf, public std::enable_shared_from_this<NVMeMi>
         override;
 
     void adminFwDownload(
-        uint8_t eid, uint32_t offset, uint32_t dataLen, std::span<uint8_t> data,
+        uint8_t eid, uint32_t offset, uint32_t dataLen, std::vector<char> data,
         std::function<void(const std::error_code&, nvme_status_field)>&& cb)
         override;
 
@@ -95,7 +97,8 @@ class NVMeMi : public NVMeMiIntf, public std::enable_shared_from_this<NVMeMi>
     std::map<uint8_t, nvme_mi_ctrl_t> controllers;
     std::mutex controllersMtx;
 
-    std::mutex mctpMtx;
+    // Per-EID mutex: serializes NVMe commands for this endpoint
+    std::shared_ptr<std::mutex> endpointMux;
 
     // A worker thread for calling NVMeMI cmd.
     class Worker

@@ -7,9 +7,14 @@
 #include <phosphor-logging/lg2.hpp>
 
 #include <cerrno>
+#include <chrono>
 #include <iomanip> // Added for std::hex, std::setw, std::setfill
 #include <iostream>
+#include <map>
+#include <mutex>
 #include <sstream> // Added for std::ostringstream
+#include <thread>
+#include <vector>
 
 constexpr size_t maxNVMeMILength = 4096;
 
@@ -30,7 +35,7 @@ NVMeMi::NVMeMi(boost::asio::io_context& io,
                const std::shared_ptr<sdbusplus::asio::connection>& conn,
                const std::vector<uint8_t>& addr, int net, uint8_t eid) :
     io(io), conn(conn), dbus(*conn), net(net), eid(eid),
-    addr(addr.begin(), addr.end())
+    addr(addr.begin(), addr.end()), endpointMux(std::make_shared<std::mutex>())
 {
     // reset to unassigned nid/eid and endpoint
 
@@ -154,7 +159,7 @@ void NVMeMi::Worker::post(std::function<void(void)>&& func)
 void NVMeMi::post(std::function<void(void)>&& func)
 {
     worker->post([self{shared_from_this()}, func{std::move(func)}]() {
-        std::unique_lock<std::mutex> lock(self->mctpMtx);
+        std::lock_guard<std::mutex> lock(*self->endpointMux);
         func();
     });
 }
@@ -221,8 +226,6 @@ void NVMeMi::miPCIePortInformation(
                 });
                 return;
             }
-            // add the delay to ensure the drive can process the command
-            std::this_thread::sleep_for(std::chrono::milliseconds(300));
             struct nvme_mi_read_port_info port{};
             memset(&port, 0, sizeof(port));
             for (auto i = 0; i <= ssInfo.nump; i++)
@@ -1181,81 +1184,97 @@ void NVMeMi::adminFwCommit(
         });
         return;
     }
-    try
+    nvme_fw_commit_args args{};
+    memset(&args, 0, sizeof(args));
+    args.args_size = sizeof(args);
+    args.action = action;
+    args.slot = slot;
+    args.bpid = bpid;
+
+    std::lock_guard<std::mutex> lock(*endpointMux);
+    nvme_mi_ctrl_t ctrl = getController(eid);
+    if (ctrl == nullptr)
     {
-        nvme_fw_commit_args args{};
-        memset(&args, 0, sizeof(args));
-        args.args_size = sizeof(args);
-        args.action = action;
-        args.slot = slot;
-        args.bpid = bpid;
-        boost::asio::post(io, [eid, args, cb{std::move(cb)},
-                               self{shared_from_this()}]() mutable {
-            nvme_mi_ctrl_t ctrl = self->getController(eid);
-            if (ctrl == nullptr)
-            {
-                lg2::error("[eid:{EID}] controller not found", "EID",
-                           static_cast<int>(eid));
-                boost::asio::post(self->io, [cb{cb}]() {
-                    cb(std::make_error_code(std::errc::no_such_device),
-                       nvme_status_field::NVME_SC_MASK);
-                });
-                return;
-            }
-            int rc = nvme_mi_admin_fw_commit(ctrl, &args);
-            if (rc < 0)
-            {
-                lg2::error(
-                    "[addr:{ADDR}, eid:{EID}] fail to nvme_mi_admin_fw_commit: {ERR}",
-                    "ADDR", self->addr, "EID", static_cast<int>(self->eid),
-                    "ERR", std::strerror(errno));
-                boost::asio::post(self->io,
-                                  [cb{std::move(cb)}, lastErrno{errno}]() {
-                    cb(std::make_error_code(static_cast<std::errc>(lastErrno)),
-                       nvme_status_field::NVME_SC_MASK);
-                });
-                return;
-            }
-            if (rc >= 0)
-            {
-                switch (rc & 0x7ff)
-                {
-                    case NVME_SC_SUCCESS:
-                    case NVME_SC_FW_NEEDS_CONV_RESET:
-                    case NVME_SC_FW_NEEDS_SUBSYS_RESET:
-                    case NVME_SC_FW_NEEDS_RESET:
-                        boost::asio::post(self->io, [rc, cb{std::move(cb)}]() {
-                            cb({}, static_cast<nvme_status_field>(rc));
-                        });
-                        break;
-                    default:
-                        std::string_view errMsg = statusToString(
-                            static_cast<nvme_mi_resp_status>(rc));
-                        lg2::error("fail to nvme_mi_admin_fw_commit: {MSG} ",
-                                   "MSG", errMsg);
-                        boost::asio::post(self->io, [rc, cb{std::move(cb)}]() {
-                            cb(std::make_error_code(std::errc::bad_message),
-                               static_cast<nvme_status_field>(rc));
-                        });
-                }
-                return;
-            }
-        });
-    }
-    catch (const std::runtime_error& e)
-    {
-        lg2::error("[addr:{ADDR}, eid:{EID}] {MSG}", "ADDR", addr, "EID",
-                   static_cast<int>(eid), "MSG", e.what());
+        lg2::error("[eid:{EID}] controller not found", "EID",
+                   static_cast<int>(eid));
         boost::asio::post(io, [cb{std::move(cb)}]() {
             cb(std::make_error_code(std::errc::no_such_device),
                nvme_status_field::NVME_SC_MASK);
         });
         return;
     }
+    int rc = nvme_mi_admin_fw_commit(ctrl, &args);
+    int savedErrno = errno;
+    if (rc < 0)
+    {
+        lg2::error(
+            "[addr:{ADDR}, eid:{EID}] fail to nvme_mi_admin_fw_commit: rc={RC} {ERR}",
+            "ADDR", addr, "EID", static_cast<int>(eid), "RC", rc, "ERR",
+            std::strerror(savedErrno));
+        boost::asio::post(io, [cb{std::move(cb)}, lastErrno{savedErrno}]() {
+            cb(std::make_error_code(static_cast<std::errc>(lastErrno)),
+               nvme_status_field::NVME_SC_MASK);
+        });
+        return;
+    }
+    if (rc >= 0)
+    {
+        switch (rc & 0x7ff)
+        {
+            case NVME_SC_SUCCESS:
+            case (NVME_SCT_CMD_SPECIFIC << NVME_SCT_SHIFT) |
+                NVME_SC_FW_NEEDS_CONV_RESET:
+            case (NVME_SCT_CMD_SPECIFIC << NVME_SCT_SHIFT) |
+                NVME_SC_FW_NEEDS_SUBSYS_RESET:
+            case (NVME_SCT_CMD_SPECIFIC << NVME_SCT_SHIFT) |
+                NVME_SC_FW_NEEDS_RESET:
+                boost::asio::post(io, [rc, cb{std::move(cb)}]() {
+                    cb({}, static_cast<nvme_status_field>(rc));
+                });
+                break;
+            default:
+            {
+                lg2::error(
+                    "fail to nvme_mi_admin_fw_commit: NVMe status {STATUS}",
+                    "STATUS", static_cast<uint32_t>(rc));
+                boost::asio::post(io, [rc, cb{std::move(cb)}]() {
+                    cb(std::make_error_code(std::errc::bad_message),
+                       static_cast<nvme_status_field>(rc));
+                });
+            }
+        }
+    }
+}
+
+/** Return a human-readable string for NVMe Admin (CQE) status from FW Download.
+ *  statusToString() only covers NVMe-MI response codes; FW Download returns
+ *  Admin completion status, so we map common codes here.
+ */
+static std::string_view adminFwStatusToString(int status)
+{
+    switch (status & 0x7ff)
+    {
+        case NVME_SC_SUCCESS:
+            return "Success";
+        case 0x01:
+            return "Invalid command opcode";
+        case 0x02:
+            return "Invalid field in command";
+        case 0x09:
+            return "Command sequence error";
+        case 0x0c:
+            return "Abort requested";
+        case 0x11:
+            return "Format in progress";
+        case 0x14:
+            return "Firmware download rejected or device busy (0x114)";
+        default:
+            return "Unknown NVMe admin status";
+    }
 }
 
 void NVMeMi::adminFwDownload(
-    uint8_t eid, uint32_t offset, uint32_t dataLen, std::span<uint8_t> data,
+    uint8_t eid, uint32_t offset, uint32_t dataLen, std::vector<char> data,
     std::function<void(const std::error_code&, nvme_status_field)>&& cb)
 {
     if (nvmeEP == nullptr)
@@ -1282,76 +1301,65 @@ void NVMeMi::adminFwDownload(
         return;
     }
 
-    try
+    std::lock_guard<std::mutex> lock(*endpointMux);
+    nvme_mi_ctrl_t ctrl = getController(eid);
+    if (ctrl == nullptr)
     {
-        boost::asio::post(io, [eid, offset, dataLen, data, cb{std::move(cb)},
-                               self{shared_from_this()}]() mutable {
-            nvme_mi_ctrl_t ctrl = self->getController(eid);
-            if (ctrl == nullptr)
-            {
-                lg2::error("[eid:{EID}] controller not found", "EID",
-                           static_cast<int>(eid));
-                boost::asio::post(self->io, [cb{cb}]() {
-                    cb(std::make_error_code(std::errc::no_such_device),
-                       nvme_status_field::NVME_SC_MASK);
-                });
-                return;
-            }
-
-            nvme_fw_download_args args{};
-            memset(&args, 0, sizeof(args));
-            args.args_size = sizeof(args);
-            args.offset = offset;
-            args.data_len = dataLen;
-            args.data = data.data();
-
-            int rc = nvme_mi_admin_fw_download(ctrl, &args);
-            if (rc < 0)
-            {
-                lg2::error(
-                    "[addr:{ADDR}, eid:{EID}] fail to nvme_mi_admin_fw_download: {ERR}",
-                    "ADDR", self->addr, "EID", static_cast<int>(self->eid),
-                    "ERR", std::strerror(errno));
-                boost::asio::post(self->io,
-                                  [cb{std::move(cb)}, lastErrno{errno}]() {
-                    cb(std::make_error_code(static_cast<std::errc>(lastErrno)),
-                       nvme_status_field::NVME_SC_MASK);
-                });
-                return;
-            }
-
-            if (rc >= 0)
-            {
-                switch (rc & 0x7ff)
-                {
-                    case NVME_SC_SUCCESS:
-                        boost::asio::post(self->io, [rc, cb{std::move(cb)}]() {
-                            cb({}, static_cast<nvme_status_field>(rc));
-                        });
-                        break;
-                    default:
-                        std::string_view errMsg = statusToString(
-                            static_cast<nvme_mi_resp_status>(rc));
-                        lg2::error("fail to nvme_mi_admin_fw_download: {MSG} ",
-                                   "MSG", errMsg);
-                        boost::asio::post(self->io, [rc, cb{std::move(cb)}]() {
-                            cb(std::make_error_code(std::errc::bad_message),
-                               static_cast<nvme_status_field>(rc));
-                        });
-                }
-                return;
-            }
-        });
-    }
-    catch (const std::runtime_error& e)
-    {
-        lg2::error("[addr:{ADDR}, eid:{EID}] {MSG}", "ADDR", addr, "EID",
-                   static_cast<int>(eid), "MSG", e.what());
+        lg2::error("[eid:{EID}] controller not found", "EID",
+                   static_cast<int>(eid));
         boost::asio::post(io, [cb{std::move(cb)}]() {
             cb(std::make_error_code(std::errc::no_such_device),
                nvme_status_field::NVME_SC_MASK);
         });
         return;
+    }
+
+    nvme_fw_download_args args{};
+    memset(&args, 0, sizeof(args));
+    args.args_size = sizeof(args);
+    args.offset = offset;
+    args.data_len = dataLen;
+    args.data = data.data();
+
+    int rc = nvme_mi_admin_fw_download(ctrl, &args);
+    int savedErrno = errno;
+    if (rc < 0)
+    {
+        lg2::error(
+            "nvme_mi_admin_fw_download failed: EID {EID} rc={RC} errno={ERRNO} ({ERR})",
+            "EID", static_cast<int>(eid), "RC", rc, "ERRNO", savedErrno, "ERR",
+            savedErrno != 0 ? std::strerror(savedErrno) : "n/a");
+        boost::asio::post(io, [cb{std::move(cb)}, lastErrno{savedErrno}]() {
+            cb(std::make_error_code(static_cast<std::errc>(lastErrno)),
+               nvme_status_field::NVME_SC_MASK);
+        });
+        return;
+    }
+
+    if (rc >= 0)
+    {
+        switch (rc & 0x7ff)
+        {
+            case NVME_SC_SUCCESS:
+                boost::asio::post(io, [rc, cb{std::move(cb)}]() {
+                    cb({}, static_cast<nvme_status_field>(rc));
+                });
+                break;
+            default:
+            {
+                std::string_view errMsg = adminFwStatusToString(rc);
+                std::ostringstream statusHex;
+                statusHex << "0x" << std::hex << (rc & 0x7ff);
+                lg2::error(
+                    "nvme_mi_admin_fw_download NVMe status: EID {EID} status={STATUS} ({MSG})",
+                    "EID", static_cast<int>(eid), "STATUS", statusHex.str(),
+                    "MSG", errMsg);
+                boost::asio::post(io, [rc, cb{std::move(cb)}]() {
+                    cb(std::make_error_code(std::errc::bad_message),
+                       static_cast<nvme_status_field>(rc));
+                });
+            }
+        }
     }
 }
 

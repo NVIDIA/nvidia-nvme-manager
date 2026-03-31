@@ -786,6 +786,12 @@ void NVMeDevice::pollDrive()
     });
 }
 
+void NVMeDevice::setFwUpdateProgress(uint32_t percent, OperationStatus status)
+{
+    Progress::progress(percent, false);
+    Progress::status(status, false);
+}
+
 void NVMeDevice::updateSanitizeStatus(EraseMethod type)
 {
     setEstimateTime(0);
