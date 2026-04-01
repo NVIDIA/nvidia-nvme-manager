@@ -73,16 +73,13 @@ inline std::mutex& getDbusMutex()
  *  @param[in] resolution - Resolution field
  *  @param[in] ooc - Origin of condition
  *  @param[in] logNamespace - Logging namespace, default is StorageDevice
- *  @param[in] blocking - If true, use synchronous D-Bus call (for CLI tools);
- *                        if false, use async (default for daemons)
  */
 inline void
     createLogEntry(const std::shared_ptr<sdbusplus::asio::connection>& conn,
                    const std::string& messageID, const Level& level,
                    const std::string& arg0, const std::string& arg1,
                    const std::string& resolution, const std::string& ooc,
-                   const std::string& logNamespace = "StorageDevice",
-                   bool blocking = false)
+                   const std::string& logNamespace = "StorageDevice")
 {
     using namespace sdbusplus::xyz::openbmc_project::Logging::server;
 
@@ -127,35 +124,15 @@ inline void
 
     std::lock_guard<std::mutex> lock(getDbusMutex());
 
-    if (blocking)
-    {
-        try
-        {
-            auto method = conn->new_method_call(
-                "xyz.openbmc_project.Logging", "/xyz/openbmc_project/logging",
-                "xyz.openbmc_project.Logging.Create", "Create");
-            method.append(messageID, severity, addData);
-            conn->call(method);
-        }
-        catch (const sdbusplus::exception::SdBusError& e)
+    conn->async_method_call(
+        [messageID](boost::system::error_code ec) {
+        if (ec)
         {
             lg2::warning(
-                "Failed to create log entry for message {MESSAGEID}: {ERROR}",
-                "MESSAGEID", messageID, "ERROR", e.what());
+                "Failed to create log entry for message {MESSAGEID}: {ERROR_MESSAGE}",
+                "MESSAGEID", messageID, "ERROR_MESSAGE", ec.message());
         }
-    }
-    else
-    {
-        conn->async_method_call(
-            [messageID](boost::system::error_code ec) {
-            if (ec)
-            {
-                lg2::warning(
-                    "Failed to create log entry for message {MESSAGEID}: {ERROR_MESSAGE}",
-                    "MESSAGEID", messageID, "ERROR_MESSAGE", ec.message());
-            }
-        }, "xyz.openbmc_project.Logging", "/xyz/openbmc_project/logging",
-            "xyz.openbmc_project.Logging.Create", "Create", messageID, severity,
-            addData);
-    }
+    }, "xyz.openbmc_project.Logging", "/xyz/openbmc_project/logging",
+        "xyz.openbmc_project.Logging.Create", "Create", messageID, severity,
+        addData);
 }

@@ -1,4 +1,9 @@
-nvme_srcs = files('NVMeDevice.cpp', 'NVMeDeviceMain.cpp', 'NVMeMi.cpp')
+nvme_srcs = files(
+    'NVMeDevice.cpp',
+    'NVMeDeviceMain.cpp',
+    'NVMeFwUpdateHandler.cpp',
+    'NVMeMi.cpp',
+)
 if get_option('nvme_mi_sensors')
     nvme_srcs += files(
         'sensors/GetSensorConfiguration.cpp',

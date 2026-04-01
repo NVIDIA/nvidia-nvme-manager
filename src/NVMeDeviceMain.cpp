@@ -2,9 +2,12 @@
 
 #include <MCTPDiscovery.hpp>
 #include <NVMeDevice.hpp>
+#include <NVMeFwUpdateHandler.hpp>
 #ifdef NVME_MI_SENSORS
 #include <sensors/NVMeMiSensorManager.hpp>
 #endif
+#include <libnvme.h>
+
 #include <boost/asio/steady_timer.hpp>
 #include <dbusutil.hpp>
 #include <nlohmann/json.hpp>
@@ -17,6 +20,7 @@
 #include <optional>
 #include <regex>
 #include <set>
+#include <sstream>
 #include <utility>
 #include <vector>
 
@@ -1190,6 +1194,8 @@ int main()
             }
         });
         matches.emplace_back(std::move(hostStateMatch));
+
+        startNvmeFwUpdateMonitor(bus);
 
         io.run();
         return 0;
