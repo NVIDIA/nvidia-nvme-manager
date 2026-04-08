@@ -1,5 +1,6 @@
 #pragma once
 
+#include <boost/asio/post.hpp>
 #include <boost/system/error_code.hpp>
 #include <phosphor-logging/lg2.hpp>
 #include <sdbusplus/asio/connection.hpp>
@@ -9,7 +10,6 @@
 
 #include <map>
 #include <memory>
-#include <mutex>
 #include <string>
 
 const std::string resourceErrorDetected{
@@ -47,21 +47,6 @@ const std::string driveInserted{"StorageDevice.1.0.DriveInserted"};
 const std::string driveRemoved{"StorageDevice.1.0.DriveRemoved"};
 
 using Level = sdbusplus::xyz::openbmc_project::Logging::server::Entry::Level;
-
-/** @brief Get the D-Bus mutex for protecting D-Bus operations
- *
- * This function returns a reference to a static mutex used to protect D-Bus
- * operations from parallel threads. This prevents race conditions when multiple
- * parallel threads attempt to create log entries simultaneously through a
- * shared D-Bus connection.
- *
- * @return Reference to the static D-Bus mutex
- */
-inline std::mutex& getDbusMutex()
-{
-    static std::mutex dbusMutex;
-    return dbusMutex;
-}
 
 /** @brief Create the D-Bus log entry for message registry
  *
@@ -122,17 +107,18 @@ inline void
 
     auto severity = convertForMessage(level);
 
-    std::lock_guard<std::mutex> lock(getDbusMutex());
-
-    conn->async_method_call(
-        [messageID](boost::system::error_code ec) {
-        if (ec)
-        {
-            lg2::warning(
-                "Failed to create log entry for message {MESSAGEID}: {ERROR_MESSAGE}",
-                "MESSAGEID", messageID, "ERROR_MESSAGE", ec.message());
-        }
-    }, "xyz.openbmc_project.Logging", "/xyz/openbmc_project/logging",
-        "xyz.openbmc_project.Logging.Create", "Create", messageID, severity,
-        addData);
+    boost::asio::post(conn->get_io_context(),
+                      [conn, messageID, severity, addData]() {
+        conn->async_method_call(
+            [messageID](boost::system::error_code ec) {
+            if (ec)
+            {
+                lg2::warning(
+                    "Failed to create log entry for message {MESSAGEID}: {ERROR_MESSAGE}",
+                    "MESSAGEID", messageID, "ERROR_MESSAGE", ec.message());
+            }
+        }, "xyz.openbmc_project.Logging", "/xyz/openbmc_project/logging",
+            "xyz.openbmc_project.Logging.Create", "Create", messageID, severity,
+            addData);
+    });
 }
