@@ -321,6 +321,11 @@ static void handleMCTPEndpoints(
         else
         {
             lg2::info("Drive has been added on EID: {EID}", "EID", eid);
+#ifdef NVME_MI_SENSORS
+            lg2::info(
+                "Drive EID {EID} already in driveMap, sensors not re-created",
+                "EID", eid);
+#endif
 
             // Clear connectivity degraded flag since InterfacesAdded means
             // endpoint is available (mctpd may not always emit connectivity
@@ -1012,6 +1017,39 @@ int main()
             emHandler);
 
         matches.emplace_back(std::move(emIfaceAddedMatch));
+
+#ifdef NVME_MI_SENSORS
+        // Watch for entity-manager sensor config interfaces appearing under
+        // the inventory tree.  This handles the race where EM starts late and
+        // publishes NVME1000/Nvmem2 configs after drives were already
+        // discovered and the initial GetSensorConfiguration call returned
+        // empty.  Debounced 1 s to batch rapid EM startup activity.
+        // refreshSensors() is a no-op once all drives have sensor contexts, so
+        // spurious signals (e.g. fan/temp configs) add no real overhead.
+        boost::asio::steady_timer emSensorConfigTimer(io);
+        auto emSensorConfigMatch =
+            std::make_unique<sdbusplus::bus::match::match>(
+                static_cast<sdbusplus::bus::bus&>(*bus),
+                "type='signal',member='InterfacesAdded',"
+                "arg0path='/xyz/openbmc_project/inventory/'",
+                [&emSensorConfigTimer](sdbusplus::message::message&) {
+            emSensorConfigTimer.expires_after(std::chrono::seconds(1));
+            emSensorConfigTimer.async_wait(
+                [](const boost::system::error_code& ec) {
+                if (ec)
+                {
+                    return;
+                }
+                if (getSensorManager())
+                {
+                    lg2::info(
+                        "EM inventory InterfacesAdded, refreshing sensor inventory");
+                    getSensorManager()->refreshSensors();
+                }
+            });
+        });
+        matches.emplace_back(std::move(emSensorConfigMatch));
+#endif
 
         boost::asio::steady_timer debounceTimer(io);
         std::function<void(sdbusplus::message::message&)> eventHandler =

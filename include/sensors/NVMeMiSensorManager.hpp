@@ -54,6 +54,12 @@ class NVMeMiSensorManager
     /** Remove sensors for this EID when drive is removed. */
     void removeSensors(uint8_t eid);
 
+    /** Re-query EM sensor configs for all drives in driveMap that have no
+     *  sensor context yet.  Safe to call spuriously — no-op when all drives
+     *  already have sensors.  Used when EM publishes configs after the initial
+     *  GetSensorConfiguration call returned empty (late EM startup). */
+    void refreshSensors();
+
     /** Update temp and status sensors from health poll result.
      *  Called by NVMeDevice via sensorsUpdater when miSubsystemHealthStatusPoll
      * completes. ss=nullptr indicates poll error. */

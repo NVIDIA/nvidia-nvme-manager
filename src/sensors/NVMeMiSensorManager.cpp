@@ -108,6 +108,11 @@ void NVMeMiSensorManager::handleSensorConfigurations(
 {
     std::vector<SensorConfig> pendingSensors;
 
+    lg2::info("handleSensorConfigurations: {COUNT} EM config objects, "
+              "{NEIDS} EIDs pending",
+              "COUNT", sensorConfigurations.size(), "NEIDS",
+              eidsToCreate.size());
+
     for (const auto& [interfacePath, sensorData] : sensorConfigurations)
     {
         auto tempSensorBase =
@@ -121,9 +126,15 @@ void NVMeMiSensorManager::handleSensorConfigurations(
 
             if (!sensorName || eid == 0)
             {
+                lg2::warning("Skipping NVME1000 config at {PATH}: "
+                             "name={NAME} address/EID={EID} (missing or zero)",
+                             "PATH", interfacePath.str, "NAME",
+                             sensorName.value_or("(missing)"), "EID", eid);
                 continue;
             }
 
+            lg2::info("Found NVME1000 config: name={NAME} EID={EID}", "NAME",
+                      *sensorName, "EID", eid);
             std::vector<thresholds::Threshold> sensorThresholds;
             thresholds::parseThresholdsFromConfig(sensorData, sensorThresholds);
 
@@ -144,22 +155,34 @@ void NVMeMiSensorManager::handleSensorConfigurations(
 
             if (!sensorName || eid == 0)
             {
+                lg2::warning("Skipping Nvmem2 config at {PATH}: "
+                             "name={NAME} address/EID={EID} (missing or zero)",
+                             "PATH", interfacePath.str, "NAME",
+                             sensorName.value_or("(missing)"), "EID", eid);
                 continue;
             }
 
+            lg2::info("Found Nvmem2 config: name={NAME} EID={EID}", "NAME",
+                      *sensorName, "EID", eid);
             float pollRate = getPollRate(sensorConfig, 1.0F);
             pendingSensors.push_back(
                 {interfacePath.str, *sensorName, eid, {}, pollRate, false});
         }
     }
 
-    // Group config by EID and cache for future createSensorsForEid calls
+    // Group config by EID
     std::map<uint8_t, std::vector<SensorConfig>> configsByEid;
     for (const auto& cfg : pendingSensors)
     {
         configsByEid[cfg.eid].push_back(cfg);
     }
-    cachedConfigByEid = configsByEid;
+
+    // Only update cache when EM returns actual configs; preserve existing
+    // cache if EM is temporarily unavailable (e.g., timing race on BMC boot)
+    if (!configsByEid.empty())
+    {
+        cachedConfigByEid = configsByEid;
+    }
     configLoadInProgress = false;
 
     // Create sensors for each requested EID (match by config, no driveMap
@@ -174,6 +197,24 @@ void NVMeMiSensorManager::handleSensorConfigurations(
             sensorContexts.erase(eid);
         }
     }
+
+    // If EM now has configs, also create sensors for drives already in
+    // driveMap that have no sensor context yet — handles the timing race
+    // where drives were discovered before EM published its configs
+    if (!configsByEid.empty())
+    {
+        auto& driveMap = getDriveMap();
+        for (const auto& [eid, _] : driveMap)
+        {
+            if (!sensorContexts.contains(eid))
+            {
+                lg2::info(
+                    "EM config now available, creating sensors for drive EID {EID} already in driveMap",
+                    "EID", eid);
+                createSensorsWithConfig(eid, configsByEid);
+            }
+        }
+    }
 }
 
 void NVMeMiSensorManager::createSensorsWithConfig(
@@ -183,6 +224,9 @@ void NVMeMiSensorManager::createSensorsWithConfig(
     auto cfgIt = configsByEid.find(eid);
     if (cfgIt == configsByEid.end())
     {
+        lg2::warning("No EM sensor config found for drive EID {EID} — "
+                     "check that NVME1000/Nvmem2 config has Address={EID}",
+                     "EID", eid);
         return;
     }
     const auto& configs = cfgIt->second;
@@ -303,11 +347,32 @@ void NVMeMiSensorManager::removeSensors(uint8_t eid)
     }
 }
 
+void NVMeMiSensorManager::refreshSensors()
+{
+    // Call createSensors() for every drive that has no sensor context yet.
+    // createSensors() uses the cache when available (instant), or batches
+    // EIDs into a single async GetSensorConfiguration call.  It is a no-op
+    // for drives that already have sensors, so spurious calls are harmless.
+    auto& driveMap = getDriveMap();
+    for (const auto& [eid, _] : driveMap)
+    {
+        if (!sensorContexts.contains(eid))
+        {
+            lg2::info(
+                "refreshSensors: no sensor context for EID {EID}, triggering creation",
+                "EID", eid);
+            createSensors(eid);
+        }
+    }
+}
+
 void NVMeMiSensorManager::createSensors(uint8_t eid)
 {
     auto cfgIt = cachedConfigByEid.find(eid);
     if (cfgIt != cachedConfigByEid.end())
     {
+        lg2::info("Creating sensors for drive EID {EID} from cached EM config",
+                  "EID", eid);
         createSensorsWithConfig(eid, cachedConfigByEid);
         return;
     }
