@@ -20,7 +20,9 @@
 #include <optional>
 #include <regex>
 #include <set>
+#include <span>
 #include <sstream>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -955,8 +957,23 @@ static void
     }
 }
 
-int main()
+int main(int argc, char* argv[])
 {
+    bool debug = false;
+    auto args = std::span<char*>(argv, static_cast<size_t>(argc));
+    for (size_t i = 1; i < args.size(); ++i)
+    {
+        if (std::string_view(args[i]) == "--debug")
+        {
+            debug = true;
+        }
+    }
+
+    if (debug)
+    {
+        NVMeMi::initLogging();
+    }
+
     try
     {
         boost::asio::io_context io;

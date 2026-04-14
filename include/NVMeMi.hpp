@@ -16,6 +16,8 @@ class NVMeMi : public NVMeMiIntf, public std::enable_shared_from_this<NVMeMi>
            const std::vector<uint8_t>& addr, int net, uint8_t eid);
     ~NVMeMi() override;
 
+    static void initLogging();
+
     // Delete copy operations
     NVMeMi(const NVMeMi&) = delete;
     NVMeMi& operator=(const NVMeMi&) = delete;
