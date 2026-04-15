@@ -143,21 +143,11 @@ class NVMeDevice :
         eraseType = type;
     }
 
-    uint32_t getEstimateTime() const
-    {
-        return estimatedTime;
-    }
-
-    void setEstimateTime(uint32_t time)
-    {
-        estimatedTime = time;
-    }
     uint32_t getI2CBus() const
     {
         return bus;
     }
 
-    void updatePercent(uint32_t endTime);
     void updateFormFactor(const std::string& form);
     void updateDriveAssociations();
     void erase(uint16_t overwritePasses, EraseMethod eraseType) override;
@@ -273,7 +263,6 @@ class NVMeDevice :
     uint32_t nodmmas{0};
     uint32_t sanicap{0}; // Store full sanitize capabilities
     EraseMethod eraseType = EraseMethod::BlockErase;
-    uint32_t estimatedTime{0};
 
     // triggered the smart error from Dbus.
     bool backupDeviceErr{false};

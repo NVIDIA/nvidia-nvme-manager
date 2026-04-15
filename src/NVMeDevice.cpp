@@ -509,28 +509,6 @@ void NVMeDevice::generateRedfishEventbySmart(uint8_t sw)
     }
 }
 
-void NVMeDevice::updatePercent(uint32_t endTime)
-{
-    if (endTime == 0xFFFFFFFF)
-    {
-        endTime = driveSanitizeTime;
-        lg2::info("no estimated sanitize time is reported by drive");
-    }
-    auto time = getEstimateTime() + pollInterval;
-    uint32_t percent = (endTime > 0) ? ((time * 100) / endTime) : 0;
-
-    // Cap percentage at 100% when time exceeds estimated time
-    if (percent > 100)
-    {
-        percent = 100;
-    }
-
-    lg2::info("percent: {NUM} - {ECLTIME} / {MAXTIME}\n", "NUM", percent,
-              "ECLTIME", time, "MAXTIME", endTime);
-    Progress::progress(percent);
-    setEstimateTime(time);
-}
-
 void NVMeDevice::setSensorsUpdater(
     std::function<void(nvme_mi_nvm_ss_health_status*)> updater,
     float pollIntervalSec)
@@ -633,47 +611,19 @@ void NVMeDevice::pollDrive()
                     return;
                 }
 
-                auto type = self->getEraseType();
-                auto noDeAlloc = self->getNodmmas();
-                uint32_t time = 0;
-                if (type == EraseMethod::CryptoErase)
+                uint32_t percent = (static_cast<uint32_t>(log->sprog) * 100U) /
+                                   65536U;
+                if (percent > 99)
                 {
-                    if (noDeAlloc)
-                    {
-                        time = log->etcend;
-                    }
-                    else
-                    {
-                        time = log->etce;
-                    }
+                    percent = 99;
                 }
-                else if (type == EraseMethod::BlockErase)
-                {
-                    if (noDeAlloc)
-                    {
-                        time = log->etbend;
-                    }
-                    else
-                    {
-                        time = log->etbe;
-                    }
-                }
-                else if (type == EraseMethod::Overwrite)
-                {
-                    if (noDeAlloc)
-                    {
-                        time = log->etond;
-                    }
-                    else
-                    {
-                        time = log->eto;
-                    }
-                }
-                self->updatePercent(time);
+                lg2::info(
+                    "EID {EID} - Sanitize in progress: sprog={SPROG}, {PCT}%",
+                    "EID", static_cast<int>(self->eid), "SPROG",
+                    static_cast<uint32_t>(log->sprog), "PCT", percent);
+                self->Progress::status(OperationStatus::InProgress);
+                self->Progress::progress(percent);
             });
-            // not do health polling during the sanitize process.
-            self->pollDrive();
-            return;
         }
 
         self->getDriveLink();
@@ -794,7 +744,6 @@ void NVMeDevice::setFwUpdateProgress(uint32_t percent, OperationStatus status)
 
 void NVMeDevice::updateSanitizeStatus(EraseMethod type)
 {
-    setEstimateTime(0);
     Progress::status(OperationStatus::InProgress);
     inProgress = true;
     setEraseType(type);
