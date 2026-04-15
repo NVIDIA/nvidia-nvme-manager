@@ -1,5 +1,7 @@
 #include "NVMeMi.hpp"
 
+#include <nvme/log.h>
+
 #include <boost/asio/io_context.hpp>
 #include <boost/asio/steady_timer.hpp>
 #include <boost/endian.hpp>
@@ -29,6 +31,11 @@ nvme_root_t& NVMeMi::getNVMeRoot()
     // libnvme-mi root service
     static nvme_root_t nvmeRoot = nvme_mi_create_root(stderr, DEFAULT_LOGLEVEL);
     return nvmeRoot;
+}
+
+void NVMeMi::initLogging()
+{
+    nvme_init_logging(getNVMeRoot(), LOG_DEBUG, false, false);
 }
 
 NVMeMi::NVMeMi(boost::asio::io_context& io,
