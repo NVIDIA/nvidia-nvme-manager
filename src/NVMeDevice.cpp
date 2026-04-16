@@ -265,10 +265,6 @@ void NVMeDevice::getDriveInfo()
 
         // check the drive sanitize capability
         std::vector<EraseMethod> saniCap;
-        if ((id->sanicap & (NVME_CTRL_SANICAP_OWS)) != 0U)
-        {
-            saniCap.push_back(EraseMethod::Overwrite);
-        }
         if ((id->sanicap & (NVME_CTRL_SANICAP_BES)) != 0U)
         {
             saniCap.push_back(EraseMethod::BlockErase);
