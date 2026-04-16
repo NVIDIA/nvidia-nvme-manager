@@ -175,10 +175,10 @@ std::string NVMeDevice::getManufacture(uint16_t vid)
 
 inline uint32_t getMaxLinkSpeed(uint8_t speedVec, uint8_t lanes)
 {
-    // starting from 32 Gbs
-    int base = 32;
+    // starting from 64 GT/s (PCIe Gen 6)
+    int base = 64;
 
-    for (auto i = 4; i >= 0; i--)
+    for (auto i = 5; i >= 0; i--)
     {
         if ((speedVec & (1 << i)) != 0)
         {
@@ -192,14 +192,14 @@ inline uint32_t getMaxLinkSpeed(uint8_t speedVec, uint8_t lanes)
 
 inline uint32_t getCurrLinkSpeed(uint8_t speed, uint8_t lanes)
 {
-    uint32_t base = 32;
+    uint32_t base = 64;
     if (speed == 0)
     {
         // link not active
         return 0;
     }
 
-    for (auto i = 4; i >= 0; i--)
+    for (auto i = 5; i >= 0; i--)
     {
         if ((speed - 1) == i)
         {
