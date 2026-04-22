@@ -228,27 +228,34 @@ using OperationStatus =
  *  chunk in a loop
  */
 void runFwUpdate(const std::shared_ptr<sdbusplus::asio::connection>& conn,
-                 const ParsedNvmeUpdateArgs& args, size_t eidIndex)
+                 const ParsedNvmeUpdateArgs& args, size_t eidIndex,
+                 std::weak_ptr<NVMeDevice> weakDrive)
 {
     if (eidIndex >= args.eids.size())
     {
         return;
     }
     uint8_t eid = args.eids[eidIndex];
-    auto& driveMap = getDriveMap();
-    auto it = driveMap.find(eid);
-    if (it == driveMap.end())
-    {
-        lg2::warning("FW update: no drive for EID {EID}, skipping", "EID",
-                     static_cast<int>(eid));
-        return;
-    }
-    std::shared_ptr<NVMeDevice> drive = it->second;
     std::string objPath = driveObjPath(eid);
     std::string deviceInfo = std::string(redfishDrivePathPrefix) +
                              std::string(drivePrefix) + std::to_string(eid);
 
-    drive->setFwUpdateProgress(0, OperationStatus::InProgress);
+    // Update progress only if drive is still alive (not power-offed).
+    // Returns false if the drive was removed — caller should abort.
+    auto setProgress = [&weakDrive](uint32_t pct, OperationStatus st) -> bool {
+        auto d = weakDrive.lock();
+        if (!d)
+        {
+            return false;
+        }
+        d->setFwUpdateProgress(pct, st);
+        return true;
+    };
+
+    if (!setProgress(0, OperationStatus::InProgress))
+    {
+        return;
+    }
     logTargetDetermined(conn, deviceInfo, args.version, objPath);
 
     std::ifstream file(args.imagePath, std::ios::binary);
@@ -256,7 +263,7 @@ void runFwUpdate(const std::shared_ptr<sdbusplus::asio::connection>& conn,
     {
         lg2::error("FW update: cannot open image {PATH}", "PATH",
                    args.imagePath);
-        drive->setFwUpdateProgress(0, OperationStatus::Failed);
+        setProgress(0, OperationStatus::Failed);
         return;
     }
     file.seekg(0, std::ios::end);
@@ -265,13 +272,21 @@ void runFwUpdate(const std::shared_ptr<sdbusplus::asio::connection>& conn,
 
     logTransferringToComponent(conn, deviceInfo, args.version, objPath);
 
-    auto intf = drive->getIntf();
-    if (!intf)
+    std::shared_ptr<NVMeMiIntf> intf;
     {
-        lg2::error("FW update: no interface for EID {EID}", "EID",
-                   static_cast<int>(eid));
-        drive->setFwUpdateProgress(0, OperationStatus::Failed);
-        return;
+        auto d = weakDrive.lock();
+        if (!d)
+        {
+            return;
+        }
+        intf = d->getIntf();
+        if (!intf)
+        {
+            lg2::error("FW update: no interface for EID {EID}", "EID",
+                       static_cast<int>(eid));
+            d->setFwUpdateProgress(0, OperationStatus::Failed);
+            return;
+        }
     }
 
     const auto updateStartTime = std::chrono::steady_clock::now();
@@ -302,7 +317,7 @@ void runFwUpdate(const std::shared_ptr<sdbusplus::asio::connection>& conn,
                     .count();
             lg2::error("FW update EID {EID} failed after {MS} ms: read error",
                        "EID", static_cast<int>(eid), "MS", msRead);
-            drive->setFwUpdateProgress(0, OperationStatus::Failed);
+            setProgress(0, OperationStatus::Failed);
             return;
         }
         buf.resize(n);
@@ -337,7 +352,7 @@ void runFwUpdate(const std::shared_ptr<sdbusplus::asio::connection>& conn,
                 "EID", static_cast<int>(eid), "MS", ms, "OFFSET", offset, "MAX",
                 fwDownloadMaxRetries, "ERR", ec.message());
             logTransferFailed(conn, deviceInfo, args.version, objPath);
-            drive->setFwUpdateProgress(0, OperationStatus::Failed);
+            setProgress(0, OperationStatus::Failed);
             return;
         }
         downloadRetryCount = 0;
@@ -346,7 +361,13 @@ void runFwUpdate(const std::shared_ptr<sdbusplus::asio::connection>& conn,
                            ? static_cast<uint32_t>(
                                  (static_cast<size_t>(offset) * 90) / fileSize)
                            : 0;
-        drive->setFwUpdateProgress(pct, OperationStatus::InProgress);
+        if (!setProgress(pct, OperationStatus::InProgress))
+        {
+            lg2::info(
+                "FW update EID {EID} aborted: drive removed during download",
+                "EID", static_cast<int>(eid));
+            return;
+        }
     }
 
     logAwaitToActivate(conn, deviceInfo, args.version, objPath);
@@ -382,7 +403,7 @@ void runFwUpdate(const std::shared_ptr<sdbusplus::asio::connection>& conn,
                 "EID", static_cast<int>(eid), "MS", ms, "EC", ecCommit.value(),
                 "STATUS", static_cast<uint32_t>(statusCommit));
             logActivateFailed(conn, deviceInfo, args.version, objPath);
-            drive->setFwUpdateProgress(0, OperationStatus::Failed);
+            setProgress(0, OperationStatus::Failed);
             return;
         }
         lg2::info(
@@ -393,7 +414,7 @@ void runFwUpdate(const std::shared_ptr<sdbusplus::asio::connection>& conn,
     lg2::info("FW update EID {EID} completed in {MS} ms", "EID",
               static_cast<int>(eid), "MS", ms);
     logUpdateSuccessful(conn, deviceInfo, args.version, objPath);
-    drive->setFwUpdateProgress(100, OperationStatus::Completed);
+    setProgress(100, OperationStatus::Completed);
 }
 
 /** Deduplicate JobNew: avoid running the same nvme-update@instance twice
@@ -467,10 +488,20 @@ void onNvmeUpdateJobNew(
         return;
     }
     const ParsedNvmeUpdateArgs& argsCopy = *args;
+    auto& driveMap = getDriveMap();
     for (size_t i = 0; i < argsCopy.eids.size(); ++i)
     {
-        std::thread([conn, argsCopy, i]() {
-            runFwUpdate(conn, argsCopy, i);
+        uint8_t eid = argsCopy.eids[i];
+        auto it = driveMap.find(eid);
+        if (it == driveMap.end())
+        {
+            lg2::warning("FW update: no drive for EID {EID}, skipping", "EID",
+                         static_cast<int>(eid));
+            continue;
+        }
+        std::weak_ptr<NVMeDevice> weakDrive = it->second;
+        std::thread([conn, argsCopy, i, weakDrive]() {
+            runFwUpdate(conn, argsCopy, i, weakDrive);
         }).detach();
     }
 }
