@@ -20,9 +20,9 @@
 
 constexpr size_t maxNVMeMILength = 4096;
 
-std::map<int, std::weak_ptr<NVMeMi::Worker>>& NVMeMi::getWorkerMap()
+std::map<int, std::shared_ptr<NVMeMi::Worker>>& NVMeMi::getWorkerMap()
 {
-    static std::map<int, std::weak_ptr<NVMeMi::Worker>> workerMap{};
+    static std::map<int, std::shared_ptr<NVMeMi::Worker>> workerMap{};
     return workerMap;
 }
 
@@ -57,14 +57,14 @@ NVMeMi::NVMeMi(boost::asio::io_context& io,
     // only create one share worker for all drives
     auto& workerMap = getWorkerMap();
     auto res = workerMap.find(0);
-    if (res == workerMap.end() || res->second.expired())
+    if (res == workerMap.end())
     {
         worker = std::make_shared<Worker>();
         workerMap[0] = worker;
     }
     else
     {
-        worker = res->second.lock();
+        worker = res->second;
     }
 
 #ifdef INKERNEL_MCTP

@@ -128,7 +128,7 @@ class NVMeMi : public NVMeMiIntf, public std::enable_shared_from_this<NVMeMi>
     // devices on the same bus. Though mctp kernel drive can schedule and
     // sequencialize the transactions but assigning individual worker thread to
     // each EP makes no sense.
-    static std::map<int, std::weak_ptr<Worker>>& getWorkerMap();
+    static std::map<int, std::shared_ptr<Worker>>& getWorkerMap();
 
     static nvme_root_t& getNVMeRoot();
 
