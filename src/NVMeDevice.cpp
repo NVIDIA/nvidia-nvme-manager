@@ -212,11 +212,15 @@ inline uint32_t getCurrLinkSpeed(uint8_t speed, uint8_t lanes)
 
 void NVMeDevice::getDriveInfo()
 {
-    getIntf()->adminIdentify(
-        eid, nvme_identify_cns::NVME_IDENTIFY_CNS_CTRL, NVME_NSID_NONE, 0,
-        identifyRspLength,
-        [self{shared_from_this()}](const std::error_code& ec,
-                                   std::span<uint8_t> data) {
+    getIntf()->adminIdentify(eid, nvme_identify_cns::NVME_IDENTIFY_CNS_CTRL,
+                             NVME_NSID_NONE, 0, identifyRspLength,
+                             [weak{weak_from_this()}](const std::error_code& ec,
+                                                      std::span<uint8_t> data) {
+        auto self = weak.lock();
+        if (!self)
+        {
+            return;
+        }
         if (ec)
         {
             if (self->operationsCancelled)
@@ -290,8 +294,13 @@ void NVMeDevice::getDriveInfo()
 void NVMeDevice::getDriveLink()
 {
     intf->miPCIePortInformation(
-        [self{shared_from_this()}](const std::error_code& err,
-                                   nvme_mi_read_port_info* port) {
+        [weak{weak_from_this()}](const std::error_code& err,
+                                 nvme_mi_read_port_info* port) {
+        auto self = weak.lock();
+        if (!self)
+        {
+            return;
+        }
         if (err)
         {
             lg2::error("eid:{ID} - fail to get PCIePortInformation", "ID",
@@ -335,9 +344,14 @@ void NVMeDevice::queryController()
     constexpr int maxRetries = 5;
     constexpr int initialDelayMs = 1000;
 
-    intf->miScanCtrl([self{shared_from_this()}](
+    intf->miScanCtrl([weak{weak_from_this()}](
                          const std::error_code& ec,
                          const std::vector<nvme_mi_ctrl_t>& ctrlList) mutable {
+        auto self = weak.lock();
+        if (!self)
+        {
+            return;
+        }
         if (ec || ctrlList.empty())
         {
             if (self->operationsCancelled)
@@ -572,7 +586,12 @@ void NVMeDevice::pollDrive()
         {
             miIntf->adminGetLogPage(
                 self->eid, NVME_LOG_LID_SANITIZE, 0, 0,
-                [self](const std::error_code& ec, std::span<uint8_t> status) {
+                [weak](const std::error_code& ec, std::span<uint8_t> status) {
+                auto self = weak.lock();
+                if (!self)
+                {
+                    return;
+                }
                 if (ec)
                 {
                     lg2::error(
@@ -624,8 +643,13 @@ void NVMeDevice::pollDrive()
 
         self->getDriveLink();
         miIntf->miSubsystemHealthStatusPoll(
-            [self](__attribute__((unused)) const std::error_code& err,
+            [weak](__attribute__((unused)) const std::error_code& err,
                    nvme_mi_nvm_ss_health_status* ss) {
+            auto self = weak.lock();
+            if (!self)
+            {
+                return;
+            }
             if (err)
             {
                 lg2::error("fail to query SubSystemHealthPoll for the nvme "
@@ -655,7 +679,12 @@ void NVMeDevice::pollDrive()
         // change the nsid to 0 for new version of libnvme
         miIntf->adminGetLogPage(
             self->eid, NVME_LOG_LID_SMART, 0, 0,
-            [self](const std::error_code& ec, std::span<uint8_t> smart) {
+            [weak](const std::error_code& ec, std::span<uint8_t> smart) {
+            auto self = weak.lock();
+            if (!self)
+            {
+                return;
+            }
             if (ec)
             {
                 lg2::error(
@@ -734,8 +763,11 @@ void NVMeDevice::pollDrive()
 
 void NVMeDevice::setFwUpdateProgress(uint32_t percent, OperationStatus status)
 {
-    Progress::progress(percent, false);
-    Progress::status(status, false);
+    boost::asio::post(conn->get_io_context(),
+                      [self{shared_from_this()}, percent, status]() {
+        self->Progress::progress(percent);
+        self->Progress::status(status);
+    });
 }
 
 void NVMeDevice::updateSanitizeStatus(EraseMethod type)
@@ -766,9 +798,14 @@ void NVMeDevice::erase(uint16_t overwritePasses, EraseMethod type)
         intf->adminSanitize(
             eid, NVME_SANITIZE_SANACT_START_OVERWRITE, overwritePasses, pattern,
             sanicap, // Pass device's sanitize capabilities
-            [self{shared_from_this()},
+            [weak{weak_from_this()},
              type](const std::error_code& ec,
                    __attribute__((unused)) std::span<uint8_t> status) {
+            auto self = weak.lock();
+            if (!self)
+            {
+                return;
+            }
             if (ec)
             {
                 self->Progress::status(OperationStatus::Failed);
@@ -784,9 +821,14 @@ void NVMeDevice::erase(uint16_t overwritePasses, EraseMethod type)
         intf->adminSanitize(
             eid, NVME_SANITIZE_SANACT_START_CRYPTO_ERASE, 0, 0,
             sanicap, // Pass device's sanitize capabilities
-            [self{shared_from_this()},
+            [weak{weak_from_this()},
              type](const std::error_code& ec,
                    __attribute__((unused)) std::span<uint8_t> status) {
+            auto self = weak.lock();
+            if (!self)
+            {
+                return;
+            }
             if (ec)
             {
                 self->Progress::status(OperationStatus::Failed);
@@ -802,9 +844,14 @@ void NVMeDevice::erase(uint16_t overwritePasses, EraseMethod type)
         intf->adminSanitize(
             eid, NVME_SANITIZE_SANACT_START_BLOCK_ERASE, 0, 0,
             sanicap, // Pass device's sanitize capabilities
-            [self{shared_from_this()},
+            [weak{weak_from_this()},
              type](const std::error_code& ec,
                    __attribute__((unused)) std::span<uint8_t> status) {
+            auto self = weak.lock();
+            if (!self)
+            {
+                return;
+            }
             if (ec)
             {
                 self->Progress::status(OperationStatus::Failed);
