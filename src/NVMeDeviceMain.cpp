@@ -1200,7 +1200,8 @@ int main(int argc, char* argv[])
             "member='PropertiesChanged',"
             "path='/xyz/openbmc_project/state/host0',"
             "arg0='xyz.openbmc_project.State.Host'",
-            [bootProgressTimer, &io](sdbusplus::message::message& msg) {
+            [bootProgressTimer, &io, &objectServer,
+             &bus](sdbusplus::message::message& msg) {
             std::string interfaceName;
             std::map<std::string, std::variant<std::string>> changedProperties;
 
@@ -1239,6 +1240,16 @@ int main(int argc, char* argv[])
                         // Cancel boot progress timer to prevent unnecessary
                         // cold-removal check
                         bootProgressTimer->cancel();
+                    }
+                    // Re-scan for drives on host running. Handles warm reboot
+                    // (ForceWarmReboot/watchdog) where DC power is never cut
+                    // and mctpd never removes/re-adds endpoints, so no
+                    // InterfacesAdded signal fires to trigger createDrives().
+                    else if (hostState.find("HostState.Running") !=
+                             std::string::npos)
+                    {
+                        lg2::info("Host running, re-scanning for NVMe drives");
+                        createDrives(io, objectServer, bus);
                     }
                 }
             }
