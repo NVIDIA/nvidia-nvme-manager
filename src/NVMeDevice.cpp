@@ -159,7 +159,7 @@ std::string NVMeDevice::getManufacture(uint16_t vid)
     }
     if (vid == 0x1344)
     {
-        return {"Mircon"};
+        return {"Micron"};
     }
     if (vid == 0x1e0f)
     {
