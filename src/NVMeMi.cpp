@@ -209,6 +209,7 @@ void NVMeMi::post(std::function<void(void)>&& func)
             return;
         }
 
+        std::lock_guard coordinatorLock(*self->mctpCoordinator);
         std::lock_guard<std::mutex> lock(*self->endpointMux);
 
         // Cancellation may race with this task waiting for the endpoint.
@@ -1334,6 +1335,7 @@ void NVMeMi::adminFwCommit(
     args.slot = slot;
     args.bpid = bpid;
 
+    std::lock_guard coordinatorLock(*mctpCoordinator);
     std::lock_guard<std::mutex> lock(*endpointMux);
     nvme_mi_ctrl_t ctrl = getController(eid);
     if (ctrl == nullptr)
@@ -1444,6 +1446,7 @@ void NVMeMi::adminFwDownload(
         return;
     }
 
+    std::lock_guard coordinatorLock(*mctpCoordinator);
     std::lock_guard<std::mutex> lock(*endpointMux);
     nvme_mi_ctrl_t ctrl = getController(eid);
     if (ctrl == nullptr)

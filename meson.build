@@ -21,6 +21,12 @@ firmware_inventory = get_option('firmware_inventory')
 # Get the NVMe-MI sensors option
 nvme_mi_sensors = get_option('nvme_mi_sensors')
 
+# Get the NVMe SPDM option
+spdm = get_option('spdm')
+if spdm.enabled() and not inkernel_mctp
+    error('NVMe SPDM support requires -Dinkernel_mctp=true')
+endif
+
 add_project_arguments(
     '-Wno-psabi',
     '-Wuninitialized',
@@ -74,6 +80,9 @@ endif
 
 libnvme_dep = dependency('libnvme')
 libnvme_mi_dep = dependency('libnvme-mi')
+spdm_responder_dep = dependency('libspdmcpp_responder', required: spdm)
+mbedcrypto_dep = dependency('mbedcrypto', required: spdm)
+mbedx509_dep = dependency('mbedx509', required: spdm)
 
 if cpp.has_function(
     'nvme_mi_mi_xfer',

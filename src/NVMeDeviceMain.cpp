@@ -3,6 +3,9 @@
 #include <MCTPDiscovery.hpp>
 #include <NVMeDevice.hpp>
 #include <NVMeFwUpdateHandler.hpp>
+#ifdef NVME_SPDM
+#include <NVMeSpdmResponder.hpp>
+#endif
 #ifdef NVME_MI_SENSORS
 #include <sensors/NVMeMiSensorManager.hpp>
 #endif
@@ -11,6 +14,7 @@
 #include <boost/asio/steady_timer.hpp>
 #include <dbusutil.hpp>
 #include <nlohmann/json.hpp>
+#include <phosphor-logging/lg2.hpp>
 #ifdef NVME_MI_SENSORS
 #include <tal.hpp>
 #endif
@@ -26,7 +30,10 @@
 #include <set>
 #include <span>
 #include <sstream>
+#include <streambuf>
+#include <string>
 #include <string_view>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -69,6 +76,121 @@ bool& getColdRemovalCheckComplete()
     static bool coldRemovalCheckComplete = false;
     return coldRemovalCheckComplete;
 }
+
+#ifdef NVME_SPDM
+static constexpr uint8_t mctpTypeSpdm = 5;
+
+/**
+ * libspdmcpp logs to an std::ostream.  Forward every complete line to the
+ * OpenBMC journal instead of relying on systemd to capture a raw stdout
+ * stream.  This preserves the SPDM library's detailed debug trace in
+ * journalctl when the NVMe manager is run as a service.
+ */
+class SpdmJournalStreambuf : public std::streambuf
+{
+  public:
+    ~SpdmJournalStreambuf() override
+    {
+        sync();
+    }
+
+  protected:
+    int_type overflow(int_type character) override
+    {
+        if (traits_type::eq_int_type(character, traits_type::eof()))
+        {
+            return traits_type::not_eof(character);
+        }
+
+        append(traits_type::to_char_type(character));
+        return character;
+    }
+
+    std::streamsize xsputn(const char* data, std::streamsize size) override
+    {
+        for (std::streamsize index = 0; index < size; ++index)
+        {
+            append(data[index]);
+        }
+        return size;
+    }
+
+    int sync() override
+    {
+        flush();
+        return 0;
+    }
+
+  private:
+    void append(char character)
+    {
+        if (character == '\n')
+        {
+            flush();
+            return;
+        }
+        line += character;
+    }
+
+    void flush()
+    {
+        if (!line.empty())
+        {
+            // SPDM tracing is explicitly enabled by the NVMe manager.  Use
+            // Info so the trace remains visible on BMC images that retain
+            // journal entries only through Info priority.
+            lg2::info("SPDM: {MSG}", "MSG", line);
+            line.clear();
+        }
+    }
+
+    std::string line;
+};
+
+struct SpdmEndpointData
+{
+    std::string mctpPath;
+};
+
+std::unordered_map<uint8_t, SpdmEndpointData>& getSpdmEndpointData()
+{
+    static std::unordered_map<uint8_t, SpdmEndpointData> spdmEndpointData{};
+    return spdmEndpointData;
+}
+
+nvme::spdm::Manager*& getSpdmManager()
+{
+    static auto* spdmManager = static_cast<nvme::spdm::Manager*>(nullptr);
+    return spdmManager;
+}
+
+static void
+    createSpdmResponderForDrive(const std::shared_ptr<NVMeDevice>& drive)
+{
+    auto* manager = getSpdmManager();
+    if (manager == nullptr || !drive)
+    {
+        return;
+    }
+
+    const auto eid = drive->getEid();
+    auto it = getSpdmEndpointData().find(eid);
+    if (it == getSpdmEndpointData().end())
+    {
+        return;
+    }
+
+    const auto& data = it->second;
+    nvme::spdm::Endpoint endpoint{
+        .eid = eid,
+        .mctpPath = sdbusplus::object_path(data.mctpPath),
+        .inventoryPath = sdbusplus::object_path(drive->getObjPath()),
+        .drive = drive,
+        .coordinator = drive->getIntf()->getMctpCoordinator(),
+    };
+    manager->addOrUpdateResponder(endpoint);
+}
+#endif
 
 // Forward declarations
 static bool isHostOff(const std::shared_ptr<sdbusplus::asio::connection>& conn);
@@ -310,6 +432,9 @@ static void handleEmEndpoints(
     for (const auto& [_, context] : driveMap)
     {
         context->initialize();
+#ifdef NVME_SPDM
+        createSpdmResponderForDrive(context);
+#endif
     }
 }
 
@@ -348,6 +473,9 @@ static void handleMCTPEndpoints(
     for (const auto& [path, epData] : mctpEndpoints)
     {
         bool nvmeCap = false;
+#ifdef NVME_SPDM
+        bool spdmCap = false;
+#endif
         std::vector<uint8_t> addr;
         eid_t eid = 0;
         uint32_t net = 0;
@@ -380,6 +508,10 @@ static void handleMCTPEndpoints(
             {
                 nvmeCap = true;
             }
+#ifdef NVME_SPDM
+            spdmCap = std::find(msgTypes.begin(), msgTypes.end(),
+                                mctpTypeSpdm) != msgTypes.end();
+#endif
         }
         auto sockInfo = epData.find("xyz.openbmc_project.Common.UnixSocket");
         if (sockInfo != epData.end())
@@ -410,6 +542,22 @@ static void handleMCTPEndpoints(
             bus = std::get<uint32_t>(find->second);
         }
 
+#ifdef NVME_SPDM
+        if (spdmCap)
+        {
+            getSpdmEndpointData()[static_cast<uint8_t>(eid)] = SpdmEndpointData{
+                .mctpPath = path.str,
+            };
+        }
+        else
+        {
+            getSpdmEndpointData().erase(static_cast<uint8_t>(eid));
+            if (getSpdmManager() != nullptr)
+            {
+                getSpdmManager()->removeResponder(static_cast<uint8_t>(eid));
+            }
+        }
+#endif
         addr.push_back(0);
         pendingEndpoints.push_back({eid, bus, net, std::move(addr)});
     }
@@ -989,6 +1137,13 @@ static void deferredDestroyDrive(
     std::unordered_map<uint8_t, std::shared_ptr<NVMeDevice>>::iterator driveIt)
 {
     uint8_t eidVal = driveIt->first;
+#ifdef NVME_SPDM
+    getSpdmEndpointData().erase(eidVal);
+    if (getSpdmManager() != nullptr)
+    {
+        getSpdmManager()->removeResponder(eidVal);
+    }
+#endif
     driveIt->second->cancelPendingOperations();
     driveIt->second->clearSensorsUpdater();
 #ifdef NVME_MI_SENSORS
@@ -1050,6 +1205,14 @@ static void
         uint8_t eid = static_cast<uint8_t>(eidOpt.value());
         lg2::info("InterfacesRemoved: path {PATH} EID {EID}", "PATH",
                   objectPath.str, "EID", static_cast<int>(eid));
+
+#ifdef NVME_SPDM
+        getSpdmEndpointData().erase(static_cast<uint8_t>(eid));
+        if (getSpdmManager() != nullptr)
+        {
+            getSpdmManager()->removeResponder(static_cast<uint8_t>(eid));
+        }
+#endif
 
         // If power off, remove from driveMap but don't generate events
         if (isHostOff(conn))
@@ -1115,6 +1278,9 @@ static void
 int main(int argc, char* argv[])
 {
     bool debug = false;
+#ifdef NVME_SPDM
+    bool spdmDebug = false;
+#endif
     auto args = std::span<char*>(argv, static_cast<size_t>(argc));
     for (size_t i = 1; i < args.size(); ++i)
     {
@@ -1122,6 +1288,12 @@ int main(int argc, char* argv[])
         {
             debug = true;
         }
+#ifdef NVME_SPDM
+        else if (std::string_view(args[i]) == "--spdm-debug")
+        {
+            spdmDebug = true;
+        }
+#endif
     }
 
     if (debug)
@@ -1136,6 +1308,14 @@ int main(int argc, char* argv[])
         sdbusplus::asio::object_server objectServer(bus, true);
         objectServer.add_manager("/xyz/openbmc_project/inventory/system/nvme");
         objectServer.add_manager("/xyz/openbmc_project/sensors");
+#ifdef NVME_SPDM
+        objectServer.add_manager("/xyz/openbmc_project/SPDM");
+        SpdmJournalStreambuf spdmJournalStreambuf;
+        std::ostream spdmJournalStream(&spdmJournalStreambuf);
+        auto spdmManager = std::make_unique<nvme::spdm::Manager>(
+            io, bus, spdmJournalStream, spdmDebug);
+        getSpdmManager() = spdmManager.get();
+#endif
 #ifdef FIRMWARE_INVENTORY
         objectServer.add_manager("/xyz/openbmc_project/software");
 #endif
@@ -1389,6 +1569,13 @@ int main(int argc, char* argv[])
                         // Reset cold-removal check state
                         getColdRemovalCheckComplete() = false;
                         getDiscoveredDriveEids().clear();
+#ifdef NVME_SPDM
+                        getSpdmEndpointData().clear();
+                        if (getSpdmManager() != nullptr)
+                        {
+                            getSpdmManager()->removeAllResponders();
+                        }
+#endif
 
                         // Cancel boot progress timer to prevent unnecessary
                         // cold-removal check

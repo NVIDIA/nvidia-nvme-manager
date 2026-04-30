@@ -13,6 +13,7 @@
 
 class NVMeBasicIntf;
 class NVMeMiIntf;
+class MctpEndpointCoordinator;
 /**
  * @brief a container class to hold smart ptr to NVMe Basic or NVMe MI
  * implementation instance
@@ -128,6 +129,11 @@ class NVMeMiIntf
 
     // Close the transport before a replacement endpoint is created.
     virtual void closeEndpoint() {}
+
+    virtual std::shared_ptr<MctpEndpointCoordinator> getMctpCoordinator()
+    {
+        return {};
+    }
 
     constexpr static std::string_view statusToString(nvme_mi_resp_status status)
     {

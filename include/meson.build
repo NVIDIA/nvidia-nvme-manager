@@ -5,6 +5,7 @@ conf_data.set_quoted(
 )
 conf_data.set('DRIVE_SANITIZE_TIME', get_option('drive_sanitize_time'))
 conf_data.set('IDENTIFY_RSP_LENGTH', get_option('identify_rsp_length'))
+conf_data.set_quoted('SPDM_RESOURCE_PREFIX', get_option('spdm_resource_prefix'))
 conf_data.set_quoted('DRIVE_STATE_FILE', get_option('drive_state_file'))
 conf_data.set('BOOT_PROGRESS_TIMEOUT', get_option('boot_progress_timeout'))
 conf_data.set(

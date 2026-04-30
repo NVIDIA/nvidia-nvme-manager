@@ -42,6 +42,18 @@ option(
     description: 'Number of consecutive out-of-range drive temperature readings required to assert a threshold event',
 )
 option(
+    'spdm',
+    type: 'feature',
+    value: 'disabled',
+    description: 'enable NVMe drive SPDM D-Bus responder objects',
+)
+option(
+    'spdm_resource_prefix',
+    type: 'string',
+    value: 'IRoT_',
+    description: 'Prefix for NVMe SPDM responder resource names',
+)
+option(
     'drive_state_file',
     type: 'string',
     value: '/var/lib/nvidia-nvme-manager/nvme_drive_state.json',

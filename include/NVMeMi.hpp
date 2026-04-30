@@ -1,3 +1,4 @@
+#include "MctpEndpointCoordinator.hpp"
 #include "NVMeIntf.hpp"
 
 #include <boost/asio.hpp>
@@ -20,6 +21,11 @@ class NVMeMi : public NVMeMiIntf, public std::enable_shared_from_this<NVMeMi>
     static void initLogging();
     void cancelPendingCommands() override;
     void closeEndpoint() override;
+
+    std::shared_ptr<MctpEndpointCoordinator> getMctpCoordinator() override
+    {
+        return mctpCoordinator;
+    }
 
     // Delete copy operations
     NVMeMi(const NVMeMi&) = delete;
@@ -108,6 +114,8 @@ class NVMeMi : public NVMeMiIntf, public std::enable_shared_from_this<NVMeMi>
     // Per-EID mutex: serializes NVMe commands for this endpoint
     std::shared_ptr<std::mutex> endpointMux;
     std::atomic_bool commandsCancelled{false};
+    std::shared_ptr<MctpEndpointCoordinator> mctpCoordinator =
+        std::make_shared<MctpEndpointCoordinator>();
 
     // A worker thread for calling NVMeMI cmd.
     class Worker
