@@ -958,8 +958,7 @@ void NVMeDevice::checkAndGenerateDriveEvent()
                     std::string location =
                         currentLoc.empty() ? "Unknown Location" : currentLoc;
                     std::string redfishPath =
-                        std::string(redfishDrivePathPrefix) +
-                        std::string(drivePrefix) + std::to_string(eid);
+                        std::string(redfishDrivePathPrefix) + driveIndex;
 
                     createLogEntry(conn, driveInserted, Level::Informational,
                                    location, "", driveInsertedResolution,
@@ -992,8 +991,7 @@ void NVMeDevice::checkAndGenerateDriveEvent()
                                                    ? "Unknown Location"
                                                    : currentLoc;
                         std::string redfishPath =
-                            std::string(redfishDrivePathPrefix) +
-                            std::string(drivePrefix) + std::to_string(eid);
+                            std::string(redfishDrivePathPrefix) + driveIndex;
 
                         // Generate DriveRemoved for old drive
                         createLogEntry(conn, driveRemoved, Level::Critical,

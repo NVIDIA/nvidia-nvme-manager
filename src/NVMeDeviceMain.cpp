@@ -81,6 +81,11 @@ struct PendingMCTPEndpoint
     std::vector<uint8_t> addr;
 };
 
+static std::string getRedfishDrivePath(const NVMeDevice& drive)
+{
+    return std::string(redfishDrivePathPrefix) + drive.getDriveName();
+}
+
 static void handleEmEndpoints(
     boost::asio::io_context& io, sdbusplus::asio::object_server& objectServer,
     std::shared_ptr<sdbusplus::asio::connection>& dbusConnection,
@@ -453,6 +458,7 @@ void updateSingleDriveState(uint8_t eid)
         // Build the new drive state
         Json newDriveState;
         newDriveState["eid"] = eid;
+        newDriveState["driveName"] = driveIt->second->getDriveName();
 
         const auto& locCode = driveIt->second->getLocationCode();
         if (!locCode.empty())
@@ -613,13 +619,19 @@ static void markDriveAsRemoved(uint8_t eid)
 static std::optional<eid_t> parseEidFromObjectPath(const std::string& path)
 {
     size_t lastSlash = path.find_last_of('/');
-    if (lastSlash == std::string::npos)
+    if (lastSlash == std::string::npos || lastSlash + 1 == path.size())
     {
-        lg2::warning("Invalid MCTP path format: {PATH}", "PATH", path);
+        lg2::debug("MCTP path does not end with an EID: {PATH}", "PATH", path);
         return std::nullopt;
     }
 
     std::string eidStr = path.substr(lastSlash + 1);
+    if (eidStr.find_first_not_of("0123456789") != std::string::npos)
+    {
+        lg2::debug("MCTP path does not end with an EID: {PATH}", "PATH", path);
+        return std::nullopt;
+    }
+
     try
     {
         int eidValue = std::stoi(eidStr);
@@ -831,16 +843,18 @@ static void checkForColdRemovedDrives(
                 std::string serialNumber = drive.contains("serialNumber")
                                                ? drive["serialNumber"]
                                                : "Unknown";
+                std::string driveName =
+                    drive.contains("driveName") ? drive["driveName"] : "";
+                std::string redfishPath =
+                    driveName.empty()
+                        ? ""
+                        : std::string(redfishDrivePathPrefix) + driveName;
 
                 lg2::info(
                     "Cold-removal detected: Drive EID {EID} (SN:{SN}, Loc:{LOC}) not present after boot",
                     "EID", static_cast<int>(eid), "SN", serialNumber, "LOC",
                     location);
 
-                // Generate DriveRemoved event
-                std::string redfishPath = redfishDrivePathPrefix +
-                                          std::string(drivePrefix) +
-                                          std::to_string(eid);
                 createLogEntry(conn, driveRemoved, Level::Critical, location,
                                "", driveRemovedResolution, redfishPath);
                 lg2::info(
@@ -927,13 +941,12 @@ static void
             return;
         }
 
-        // Extract EID from object path
         auto eidOpt = parseEidFromObjectPath(objectPath.str);
         if (!eidOpt.has_value())
         {
             return;
         }
-        eid_t eid = eidOpt.value();
+        uint8_t eid = static_cast<uint8_t>(eidOpt.value());
         lg2::info("InterfacesRemoved: path {PATH} EID {EID}", "PATH",
                   objectPath.str, "EID", static_cast<int>(eid));
 
@@ -941,7 +954,7 @@ static void
         if (isHostOff(conn))
         {
             auto& driveMap = getDriveMap();
-            auto driveIt = driveMap.find(static_cast<uint8_t>(eid));
+            auto driveIt = driveMap.find(eid);
             if (driveIt != driveMap.end())
             {
                 lg2::info(
@@ -954,7 +967,7 @@ static void
 
         // Check if EID in drive map
         auto& driveMap = getDriveMap();
-        auto driveIt = driveMap.find(static_cast<uint8_t>(eid));
+        auto driveIt = driveMap.find(eid);
         if (driveIt == driveMap.end())
         {
             lg2::debug("Drive EID {EID} not in driveMap, ignoring removal",
@@ -972,9 +985,7 @@ static void
                                              : std::string(locationCode);
 
         // Generate DriveRemoved Redfish event (Severity: Critical)
-        std::string redfishPath = redfishDrivePathPrefix +
-                                  std::string(drivePrefix) +
-                                  std::to_string(eid);
+        std::string redfishPath = getRedfishDrivePath(*driveIt->second);
         createLogEntry(conn, driveRemoved, Level::Critical,
                        location, // arg0: location of the drive
                        "",       // arg1 not used for drive events

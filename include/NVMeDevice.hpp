@@ -167,6 +167,10 @@ class NVMeDevice :
     {
         return objPath;
     }
+    const std::string& getDriveName() const
+    {
+        return driveIndex;
+    }
     const std::string& getLocationCode() const
     {
         return locationCode;
