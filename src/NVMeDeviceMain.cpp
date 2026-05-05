@@ -73,11 +73,20 @@ static std::optional<eid_t> parseEidFromObjectPath(const std::string& path);
 static void checkForColdRemovedDrives(
     const std::shared_ptr<sdbusplus::asio::connection>& conn);
 
-static void handleEmEndpoints(const ManagedObjectType& objData)
+struct PendingMCTPEndpoint
 {
-    std::string form;
-    std::string driveAssoc;
-    std::string locCode;
+    eid_t eid = 0;
+    uint32_t bus = -1;
+    uint32_t net = 0;
+    std::vector<uint8_t> addr;
+};
+
+static void handleEmEndpoints(
+    boost::asio::io_context& io, sdbusplus::asio::object_server& objectServer,
+    std::shared_ptr<sdbusplus::asio::connection>& dbusConnection,
+    const ManagedObjectType& objData,
+    const std::vector<PendingMCTPEndpoint>& pendingEndpoints)
+{
     uint64_t eid = 0;
     uint64_t bus = -1;
 
@@ -88,6 +97,10 @@ static void handleEmEndpoints(const ManagedObjectType& objData)
         {
             continue;
         }
+        const Properties& nvmeProps = ep->second;
+        std::string form;
+        std::string driveAssoc;
+        std::string locCode;
         (void)bus; // avoid unused variable warning
         ep = data.find("xyz.openbmc_project.Inventory.Decorator.I2CDevice");
         if (ep != data.end())
@@ -156,33 +169,109 @@ static void handleEmEndpoints(const ManagedObjectType& objData)
                 }
             }
         }
-        auto& driveMap = getDriveMap();
-        for (const auto& [index, context] : driveMap)
+        auto findName = nvmeProps.find("Name");
+        if (findName == nvmeProps.end())
         {
-            // update location and formfactor by comparing EID or bus number
-            bool shouldUpdate = false;
+            lg2::warning("Skipping EM NVMe config at {PATH}: missing Name",
+                         "PATH", path.str);
+            continue;
+        }
+
+        const std::string& driveName = std::get<std::string>(findName->second);
+        if (driveName.empty())
+        {
+            lg2::warning("Skipping EM NVMe config at {PATH}: empty Name",
+                         "PATH", path.str);
+            continue;
+        }
+
+        const PendingMCTPEndpoint* endpoint = nullptr;
+        for (const PendingMCTPEndpoint& pendingEndpoint : pendingEndpoints)
+        {
 #ifdef INKERNEL_MCTP
-            shouldUpdate = (index == eid);
+            if (pendingEndpoint.eid == eid)
 #else
-            (void)eid; // avoid unused variable warning
-            shouldUpdate = (context->getI2CBus() == bus);
+            if (pendingEndpoint.bus == bus)
 #endif
-            if (!shouldUpdate)
             {
-                continue;
-            }
-            context->updateFormFactor(form);
-            if (!driveAssoc.empty())
-            {
-                context->driveAssociation = driveAssoc;
-                context->updateDriveAssociations();
-            }
-            if (!locCode.empty())
-            {
-                // Update location code
-                context->updateLocationCode(locCode);
+                endpoint = &pendingEndpoint;
+                break;
             }
         }
+        if (endpoint == nullptr)
+        {
+            lg2::warning(
+                "No NVMe-capable MCTP endpoint found for EM drive {NAME} EID {EID}",
+                "NAME", driveName, "EID", eid);
+            continue;
+        }
+#ifndef INKERNEL_MCTP
+        eid = endpoint->eid;
+#endif
+
+        auto& driveMap = getDriveMap();
+        bool newDrive = !driveMap.contains(eid);
+
+        // Track discovered drive EID for cold-removal detection
+        getDiscoveredDriveEids().insert(eid);
+
+        if (newDrive)
+        {
+            lg2::info("Drive is added on EID: {EID}", "EID", eid);
+            lg2::info("Found EM NVMe config name: EID {EID} -> {NAME}", "EID",
+                      eid, "NAME", driveName);
+
+            std::string p("/xyz/openbmc_project/inventory/system/nvme/");
+            p += driveName;
+            auto drivePtr = std::make_shared<NVMeDevice>(
+                io, objectServer, dbusConnection, eid, endpoint->bus,
+                static_cast<int>(endpoint->net), endpoint->addr, p, form,
+                driveAssoc, locCode);
+
+            // put drive object to map in order to implement drive removal.
+            driveMap.emplace(eid, drivePtr);
+        }
+        else
+        {
+            lg2::info("Drive has been added on EID: {EID}", "EID", eid);
+#ifdef NVME_MI_SENSORS
+            lg2::info(
+                "Drive EID {EID} already in driveMap, sensors not re-created",
+                "EID", eid);
+#endif
+
+            // Clear connectivity degraded flag since InterfacesAdded means
+            // endpoint is available (mctpd may not always emit connectivity
+            // change signal)
+            auto driveIt = driveMap.find(eid);
+            if (driveIt != driveMap.end())
+            {
+                bool wasDegraded = driveIt->second->isConnectivityDegraded();
+                driveIt->second->setConnectivityDegraded(false);
+
+                if (wasDegraded)
+                {
+                    lg2::info(
+                        "Drive EID {EID} MCTP endpoint re-discovered, clearing degraded state and resuming polling",
+                        "EID", eid);
+                }
+            }
+        }
+#ifdef NVME_MI_SENSORS
+        if (newDrive)
+        {
+            // Create sensor manager on first drive add; create sensors for
+            // every newly added drive. createSensors() uses cached config when
+            // available, or loads EM config async and creates sensors for all
+            // pending EIDs.
+            if (!getSensorManager())
+            {
+                getSensorManager() = std::make_unique<NVMeMiSensorManager>(
+                    objectServer, dbusConnection);
+            }
+            getSensorManager()->createSensors(eid);
+        }
+#endif
     }
 
     // wait for worker ready to handle NVMe-MI commands.
@@ -196,14 +285,18 @@ static void handleEmEndpoints(const ManagedObjectType& objData)
     }
 }
 
-void collectInventory(
-    std::shared_ptr<sdbusplus::asio::connection>& dbusConnection)
+static void collectInventory(
+    boost::asio::io_context& io, sdbusplus::asio::object_server& objectServer,
+    std::shared_ptr<sdbusplus::asio::connection>& dbusConnection,
+    const std::vector<PendingMCTPEndpoint>& pendingEndpoints)
 {
-    auto getter = std::make_shared<GetObjects>(
-        dbusConnection, [](const ManagedObjectType& endpoints) {
-        handleEmEndpoints(endpoints);
+    auto inventoryGetter = std::make_shared<GetObjects>(
+        dbusConnection, [&io, &objectServer, &dbusConnection, pendingEndpoints](
+                            const ManagedObjectType& nvmeInventory) {
+        handleEmEndpoints(io, objectServer, dbusConnection, nvmeInventory,
+                          pendingEndpoints);
     });
-    getter->getConfiguration(std::vector<std::string>{
+    inventoryGetter->getConfiguration(std::vector<std::string>{
         "xyz.openbmc_project.Inventory.Item.Drive",
         "xyz.openbmc_project.Inventory.Item.NVMe",
 #ifdef INKERNEL_MCTP
@@ -222,6 +315,8 @@ static void handleMCTPEndpoints(
     std::shared_ptr<sdbusplus::asio::connection>& dbusConnection,
     const ManagedObjectType& mctpEndpoints)
 {
+    std::vector<PendingMCTPEndpoint> pendingEndpoints;
+
     for (const auto& [path, epData] : mctpEndpoints)
     {
         bool nvmeCap = false;
@@ -287,68 +382,11 @@ static void handleMCTPEndpoints(
             bus = std::get<uint32_t>(find->second);
         }
 
-        auto& driveMap = getDriveMap();
         addr.push_back(0);
-
-        // Track discovered drive EID for cold-removal detection
-        getDiscoveredDriveEids().insert(eid);
-
-        if (!driveMap.contains(eid))
-        {
-            lg2::info("Drive is added on EID: {EID}", "EID", eid);
-
-            std::string p("/xyz/openbmc_project/inventory/system/nvme/");
-            p += std::string(drivePrefix);
-            p += std::to_string(eid);
-            auto drivePtr = std::make_shared<NVMeDevice>(
-                io, objectServer, dbusConnection, eid, bus,
-                static_cast<int>(net), std::move(addr), p);
-
-            // put drive object to map in order to implement drive removal.
-            driveMap.emplace(eid, drivePtr);
-
-#ifdef NVME_MI_SENSORS
-            // Create sensor manager on first drive add; create sensors for
-            // every newly added drive. createSensors() uses cached config when
-            // available, or loads EM config async and creates sensors for all
-            // pending EIDs.
-            if (!getSensorManager())
-            {
-                getSensorManager() = std::make_unique<NVMeMiSensorManager>(
-                    objectServer, dbusConnection);
-            }
-            getSensorManager()->createSensors(eid);
-#endif
-        }
-        else
-        {
-            lg2::info("Drive has been added on EID: {EID}", "EID", eid);
-#ifdef NVME_MI_SENSORS
-            lg2::info(
-                "Drive EID {EID} already in driveMap, sensors not re-created",
-                "EID", eid);
-#endif
-
-            // Clear connectivity degraded flag since InterfacesAdded means
-            // endpoint is available (mctpd may not always emit connectivity
-            // change signal)
-            auto driveIt = driveMap.find(eid);
-            if (driveIt != driveMap.end())
-            {
-                bool wasDegraded = driveIt->second->isConnectivityDegraded();
-                driveIt->second->setConnectivityDegraded(false);
-
-                if (wasDegraded)
-                {
-                    lg2::info(
-                        "Drive EID {EID} MCTP endpoint re-discovered, clearing degraded state and resuming polling",
-                        "EID", eid);
-                }
-            }
-        }
+        pendingEndpoints.push_back({eid, bus, net, std::move(addr)});
     }
-    // collect inventory data from EM
-    collectInventory(dbusConnection);
+
+    collectInventory(io, objectServer, dbusConnection, pendingEndpoints);
 }
 
 void createDrives(boost::asio::io_context& io,
@@ -999,7 +1037,8 @@ int main(int argc, char* argv[])
 
         boost::asio::steady_timer filterTimer(io);
         std::function<void(sdbusplus::message::message&)> emHandler =
-            [&filterTimer, &bus](sdbusplus::message::message&) {
+            [&filterTimer, &io, &objectServer,
+             &bus](sdbusplus::message::message&) {
             filterTimer.expires_after(std::chrono::seconds(1));
 
             filterTimer.async_wait([&](const boost::system::error_code& ec) {
@@ -1014,8 +1053,7 @@ int main(int argc, char* argv[])
                     return;
                 }
 
-                // collect inventory data from EM
-                collectInventory(bus);
+                createDrives(io, objectServer, bus);
             });
         };
 
