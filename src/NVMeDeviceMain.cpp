@@ -478,7 +478,8 @@ void updateSingleDriveState(uint8_t eid)
         bool found = false;
         for (auto& drive : driveStates)
         {
-            if (drive.contains("eid") && drive["eid"] == eid)
+            if (!locCode.empty() && drive.contains("locationCode") &&
+                drive["locationCode"] == locCode)
             {
                 drive = newDriveState;
                 found = true;

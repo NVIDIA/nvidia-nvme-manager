@@ -941,7 +941,8 @@ void NVMeDevice::checkAndGenerateDriveEvent()
         bool found = false;
         for (const auto& drive : driveStates)
         {
-            if (drive.contains("eid") && drive["eid"] == eid)
+            if (!currentLoc.empty() && drive.contains("locationCode") &&
+                drive["locationCode"] == currentLoc)
             {
                 found = true;
                 std::string connectivity = drive.contains("connectivity")
@@ -1025,9 +1026,19 @@ void NVMeDevice::checkAndGenerateDriveEvent()
 
         if (!found)
         {
-            // New drive not in state file - don't generate event, just save
-            lg2::info("New drive EID {EID} not in state file, saving state",
+            // New drive not in state file - cold add
+            lg2::info("New drive EID {EID} not in state file, generating "
+                      "DriveInserted event",
                       "EID", static_cast<int>(eid));
+
+            std::string location = currentLoc.empty() ? "Unknown Location"
+                                                      : currentLoc;
+            std::string redfishPath = std::string(redfishDrivePathPrefix) +
+                                      driveIndex;
+
+            createLogEntry(conn, driveInserted, Level::Informational, location,
+                           "", driveInsertedResolution, redfishPath);
+
             updateSingleDriveState(eid);
         }
     }
