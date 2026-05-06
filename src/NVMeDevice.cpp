@@ -20,20 +20,32 @@ using Level = sdbusplus::xyz::openbmc_project::Logging::server::Entry::Level;
 
 using Json = nlohmann::json;
 
+static Drive::DriveFormFactor getDriveFormFactor(const std::string& form);
+
 NVMeDevice::NVMeDevice(boost::asio::io_context& io,
                        sdbusplus::asio::object_server& objectServer,
                        std::shared_ptr<sdbusplus::asio::connection>& conn,
                        uint8_t eid, uint32_t bus, int net,
                        const std::vector<uint8_t>& addr,
-                       const std::string& path) :
+                       const std::string& path, const std::string& formFactor,
+                       const std::string& driveAssoc,
+                       const std::string& locCode) :
     NvmeInterfaces(static_cast<sdbusplus::bus::bus&>(*conn), path.c_str(),
                    NvmeInterfaces::action::defer_emit),
-    conn(conn), objServer(objectServer), scanTimer(io), initRetryTimer(io),
-    objPath(path), eid(eid), bus(bus), net(net)
+    driveAssociation(driveAssoc), conn(conn), objServer(objectServer),
+    scanTimer(io), initRetryTimer(io), objPath(path), eid(eid), bus(bus),
+    net(net), locationCode(locCode)
 {
     std::filesystem::path p(path);
 
     driveIndex = p.filename();
+
+    if (!formFactor.empty())
+    {
+        size_t pos = formFactor.find_last_of('.');
+        Drive::formFactor(getDriveFormFactor(formFactor.substr(pos + 1)),
+                          false);
+    }
 
     // assume the drive is good and update Dbus properties at the first place.
     markFunctional(true);
@@ -47,7 +59,7 @@ NVMeDevice::NVMeDevice(boost::asio::io_context& io,
 #endif
 }
 
-inline Drive::DriveFormFactor getDriveFormFactor(const std::string& form)
+static Drive::DriveFormFactor getDriveFormFactor(const std::string& form)
 {
     if (form == "Drive3_5")
     {
@@ -121,34 +133,6 @@ std::string NVMeDevice::stripString(std::span<const char> src)
     std::string s(src.data(), src.size());
     s.erase(s.find_last_not_of(' ') + 1);
     return s;
-}
-
-void NVMeDevice::updateFormFactor(const std::string& form)
-{
-    size_t pos = form.find_last_of('.');
-    auto formFactor = getDriveFormFactor(form.substr(pos + 1));
-    Drive::formFactor(formFactor, false);
-}
-
-void NVMeDevice::updateDriveAssociations()
-{
-    HealthType healthType = Health::health();
-    assocs = {};
-
-    // Read the current Health state and restore for associations
-    if (healthType == HealthType::Critical)
-    {
-        assocs.emplace_back("health", "critical", objPath.c_str());
-    }
-    else if (healthType == HealthType::Warning)
-    {
-        assocs.emplace_back("health", "warning", objPath.c_str());
-    }
-
-    // Set Drive's association
-    assocs.emplace_back("chassis", "drive", driveAssociation.c_str());
-
-    Associations::associations(assocs);
 }
 
 std::string NVMeDevice::getManufacture(uint16_t vid)
@@ -914,11 +898,6 @@ std::string NVMeDevice::getFirmwareVersion()
 }
 #endif
 
-void NVMeDevice::updateLocationCode(const std::string& locCode)
-{
-    locationCode = locCode;
-}
-
 void NVMeDevice::checkAndGenerateDriveEvent()
 {
     try
@@ -962,7 +941,8 @@ void NVMeDevice::checkAndGenerateDriveEvent()
         bool found = false;
         for (const auto& drive : driveStates)
         {
-            if (drive.contains("eid") && drive["eid"] == eid)
+            if (!currentLoc.empty() && drive.contains("locationCode") &&
+                drive["locationCode"] == currentLoc)
             {
                 found = true;
                 std::string connectivity = drive.contains("connectivity")
@@ -979,8 +959,7 @@ void NVMeDevice::checkAndGenerateDriveEvent()
                     std::string location =
                         currentLoc.empty() ? "Unknown Location" : currentLoc;
                     std::string redfishPath =
-                        std::string(redfishDrivePathPrefix) +
-                        std::string(drivePrefix) + std::to_string(eid);
+                        std::string(redfishDrivePathPrefix) + driveIndex;
 
                     createLogEntry(conn, driveInserted, Level::Informational,
                                    location, "", driveInsertedResolution,
@@ -1013,8 +992,7 @@ void NVMeDevice::checkAndGenerateDriveEvent()
                                                    ? "Unknown Location"
                                                    : currentLoc;
                         std::string redfishPath =
-                            std::string(redfishDrivePathPrefix) +
-                            std::string(drivePrefix) + std::to_string(eid);
+                            std::string(redfishDrivePathPrefix) + driveIndex;
 
                         // Generate DriveRemoved for old drive
                         createLogEntry(conn, driveRemoved, Level::Critical,
@@ -1048,9 +1026,19 @@ void NVMeDevice::checkAndGenerateDriveEvent()
 
         if (!found)
         {
-            // New drive not in state file - don't generate event, just save
-            lg2::info("New drive EID {EID} not in state file, saving state",
+            // New drive not in state file - cold add
+            lg2::info("New drive EID {EID} not in state file, generating "
+                      "DriveInserted event",
                       "EID", static_cast<int>(eid));
+
+            std::string location = currentLoc.empty() ? "Unknown Location"
+                                                      : currentLoc;
+            std::string redfishPath = std::string(redfishDrivePathPrefix) +
+                                      driveIndex;
+
+            createLogEntry(conn, driveInserted, Level::Informational, location,
+                           "", driveInsertedResolution, redfishPath);
+
             updateSingleDriveState(eid);
         }
     }

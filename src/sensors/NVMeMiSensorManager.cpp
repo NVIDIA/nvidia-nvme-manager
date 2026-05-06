@@ -19,6 +19,7 @@ using nvme::sensors::configInterfaceName;
 using nvme::sensors::getPollRate;
 using nvme::sensors::SensorBaseConfigMap;
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <limits>
@@ -37,6 +38,18 @@ constexpr uint8_t nvmeMiCtempTwosCompStart = 0xC5;
 constexpr unsigned int scanDelayTicks = 5 * 60;
 
 SensorContext::SensorContext(uint8_t eid) : eid(eid) {}
+
+static bool hasPendingEid(const std::vector<uint8_t>& pendingEids, uint8_t eid)
+{
+    return std::find(pendingEids.begin(), pendingEids.end(), eid) !=
+           pendingEids.end();
+}
+
+static bool hasNvmeDriveInstance(uint8_t eid)
+{
+    auto& driveMap = getDriveMap();
+    return driveMap.contains(eid);
+}
 
 static uint8_t extractAddress(const SensorBaseConfigMap& properties)
 {
@@ -185,17 +198,16 @@ void NVMeMiSensorManager::handleSensorConfigurations(
     }
     configLoadInProgress = false;
 
-    // Create sensors for each requested EID (match by config, no driveMap
-    // lookup)
+    // Create sensors only for requested EIDs that still have a live NVMe
+    // instance.  The async EM config callback can run after drive removal.
     for (uint8_t eid : eidsToCreate)
     {
-        createSensorsWithConfig(eid, configsByEid);
-        // if drive disappeared during async config load, don't leave zombie
-        auto& driveMap = getDriveMap();
-        if (!driveMap.contains(eid))
+        if (!hasNvmeDriveInstance(eid))
         {
-            sensorContexts.erase(eid);
+            continue;
         }
+
+        createSensorsWithConfig(eid, configsByEid);
     }
 
     // If EM now has configs, also create sensors for drives already in
@@ -221,6 +233,16 @@ void NVMeMiSensorManager::createSensorsWithConfig(
     uint8_t eid,
     const std::map<uint8_t, std::vector<SensorConfig>>& configsByEid)
 {
+    if (!hasNvmeDriveInstance(eid))
+    {
+        return;
+    }
+
+    if (sensorContexts.contains(eid))
+    {
+        return;
+    }
+
     auto cfgIt = configsByEid.find(eid);
     if (cfgIt == configsByEid.end())
     {
@@ -368,7 +390,22 @@ void NVMeMiSensorManager::refreshSensors()
 
 void NVMeMiSensorManager::createSensors(uint8_t eid)
 {
+    if (!hasNvmeDriveInstance(eid))
+    {
+        return;
+    }
+
+    if (sensorContexts.contains(eid))
+    {
+        return;
+    }
+
     auto cfgIt = cachedConfigByEid.find(eid);
+    if (hasPendingEid(pendingEids, eid))
+    {
+        return;
+    }
+
     if (cfgIt != cachedConfigByEid.end())
     {
         lg2::info("Creating sensors for drive EID {EID} from cached EM config",

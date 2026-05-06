@@ -5,7 +5,7 @@
  * Thin client: monitor NVMe firmware update progress and status from
  * nvme-manager (which performs the update when nvme-update@.service starts).
  * Parses the same CLI args, subscribes to xyz.openbmc_project.Common.Progress
- * on each drive path, and exits 0 if all complete successfully else 1.
+ * on each drive target path, and exits 0 if all complete successfully else 1.
  */
 
 #include <boost/asio/io_context.hpp>
@@ -43,8 +43,8 @@ static std::string dashToSlash(std::string s)
 static void printUsage(const char* programName)
 {
     std::cout << "Usage: " << programName
-              << " <firmware_path> <version> <object_path_prefix> <eid1> "
-                 "[eid2] ... [-v]\n"
+              << " <firmware_path> <version> <object_path_prefix> <drive1> "
+                 "[drive2] ... [-v]\n"
               << "\n"
               << "Arguments are the same as before; the actual update is\n"
               << "performed by nvme-manager when nvme-update@.service starts.\n"
@@ -59,7 +59,7 @@ int main(int argc, char* argv[])
         std::string imagePath;
         std::string version;
         std::string objectPathPrefix;
-        std::vector<uint8_t> eids;
+        std::vector<std::string> targets;
         bool verbose = false;
         bool help = false;
 
@@ -89,20 +89,7 @@ int main(int argc, char* argv[])
             }
             else
             {
-                try
-                {
-                    int eid = std::stoi(args[i]);
-                    if (eid >= 0 && eid <= 255)
-                    {
-                        eids.push_back(static_cast<uint8_t>(eid));
-                    }
-                }
-                catch (...)
-                {
-                    lg2::error("Invalid EID: {EID}", "EID", args[i]);
-                    printUsage(args[0]);
-                    return 1;
-                }
+                targets.emplace_back(args[i]);
             }
         }
 
@@ -112,25 +99,24 @@ int main(int argc, char* argv[])
             return 0;
         }
 
-        if (eids.empty() || imagePath.empty() || version.empty() ||
+        if (targets.empty() || imagePath.empty() || version.empty() ||
             objectPathPrefix.empty())
         {
             lg2::error("Required: firmware_path, version, object_path_prefix, "
-                       "and at least one EID");
+                       "and at least one drive target");
             printUsage(args[0]);
             return 1;
         }
 
-        // object_path_prefix is e.g. /xyz/.../nvme/NVMe_E1S_ (dashes in
-        // instance)
+        // object_path_prefix is e.g. /xyz/.../nvme/ (dashes in instance).
         std::string prefix = dashToSlash(objectPathPrefix);
 
         boost::asio::io_context io;
         auto conn = std::make_shared<sdbusplus::asio::connection>(io);
 
-        std::set<uint8_t> pending(eids.begin(), eids.end());
-        std::set<uint8_t> failed;
-        std::set<uint8_t> eidsWithProgress;
+        std::set<std::string> pending(targets.begin(), targets.end());
+        std::set<std::string> failed;
+        std::set<std::string> targetsWithProgress;
         bool done = false;
         int exitCode = 0;
         boost::asio::steady_timer timeoutTimer(io);
@@ -161,15 +147,16 @@ int main(int argc, char* argv[])
             }
         };
 
-        for (uint8_t eid : eids)
+        for (const std::string& target : targets)
         {
-            std::string path = prefix + std::to_string(eid);
+            std::string path = target.starts_with("/") ? dashToSlash(target)
+                                                       : prefix + target;
             matches.push_back(std::make_shared<sdbusplus::bus::match::match>(
                 static_cast<sdbusplus::bus::bus&>(*conn),
                 "type='signal',member='PropertiesChanged',path='" + path +
                     "',arg0='" + progressInterface + "'",
-                [&, eid, path](sdbusplus::message::message& msg) {
-                eidsWithProgress.insert(eid);
+                [&, target, path](sdbusplus::message::message& msg) {
+                targetsWithProgress.insert(target);
                 std::string iface;
                 std::map<std::string, std::variant<std::string>> props;
                 try
@@ -188,27 +175,28 @@ int main(int argc, char* argv[])
                 std::string status = std::get<std::string>(it->second);
                 if (status == statusCompleted)
                 {
-                    pending.erase(eid);
+                    pending.erase(target);
                     if (verbose)
                     {
-                        lg2::info("EID {EID} Progress Status Completed", "EID",
-                                  static_cast<int>(eid));
+                        lg2::info(
+                            "Drive target {TARGET} Progress Status Completed",
+                            "TARGET", target);
                     }
                 }
                 else if (status == statusFailed)
                 {
-                    pending.erase(eid);
-                    failed.insert(eid);
-                    lg2::error("EID {EID} Progress Status Failed", "EID",
-                               static_cast<int>(eid));
+                    pending.erase(target);
+                    failed.insert(target);
+                    lg2::error("Drive target {TARGET} Progress Status Failed",
+                               "TARGET", target);
                 }
                 checkDone();
             }));
 
             // Initial read of Status so we don't miss if already completed
             conn->async_method_call(
-                [&, eid](boost::system::error_code ec,
-                         std::variant<std::string> statusVar) {
+                [&, target](boost::system::error_code ec,
+                            std::variant<std::string> statusVar) {
                 if (ec)
                 {
                     return;
@@ -216,17 +204,17 @@ int main(int argc, char* argv[])
                 std::string status = std::get<std::string>(statusVar);
                 if (status == statusCompleted)
                 {
-                    pending.erase(eid);
+                    pending.erase(target);
                     if (verbose)
                     {
-                        lg2::info("EID {EID} already Completed", "EID",
-                                  static_cast<int>(eid));
+                        lg2::info("Drive target {TARGET} already Completed",
+                                  "TARGET", target);
                     }
                 }
                 else if (status == statusFailed)
                 {
-                    pending.erase(eid);
-                    failed.insert(eid);
+                    pending.erase(target);
+                    failed.insert(target);
                 }
                 checkDone();
             },
@@ -243,12 +231,13 @@ int main(int argc, char* argv[])
             }
             for (auto it = pending.begin(); it != pending.end();)
             {
-                uint8_t eid = *it;
-                if (!eidsWithProgress.contains(eid))
+                const std::string target = *it;
+                if (!targetsWithProgress.contains(target))
                 {
-                    lg2::error("EID {EID} no progress change within 30 seconds",
-                               "EID", static_cast<int>(eid));
-                    failed.insert(eid);
+                    lg2::error(
+                        "Drive target {TARGET} no progress change within 30 seconds",
+                        "TARGET", target);
+                    failed.insert(target);
                     it = pending.erase(it);
                 }
                 else
@@ -270,9 +259,9 @@ int main(int argc, char* argv[])
                 done = true;
                 progressChangeTimer.cancel();
                 lg2::error("Timeout waiting for Progress");
-                for (uint8_t eid : pending)
+                for (const std::string& target : pending)
                 {
-                    failed.insert(eid);
+                    failed.insert(target);
                 }
                 exitCode = 1;
                 io.stop();

@@ -3,8 +3,8 @@
  * AFFILIATES. SPDX-License-Identifier: Apache-2.0
  *
  * NVMe FW update handler: monitor nvme-update@.service via systemd JobNew,
- * parse instance (image path, version, object path prefix, EIDs), run
- * download+commit per EID, update Progress and emit FW update events.
+ * parse instance (image path, version, object path prefix, drive targets), run
+ * download+commit per drive, update Progress and emit FW update events.
  */
 
 #include <libnvme.h>
@@ -15,6 +15,7 @@
 #include <dbusutil.hpp>
 #include <phosphor-logging/lg2.hpp>
 
+#include <algorithm>
 #include <chrono>
 #include <fstream>
 #include <functional>
@@ -45,7 +46,7 @@ struct ParsedNvmeUpdateArgs
     std::string imagePath;
     std::string version;
     std::string objectPathPrefix;
-    std::vector<uint8_t> eids;
+    std::vector<std::string> targets;
 };
 
 // Additional firmware update event logging functions
@@ -151,8 +152,8 @@ void normalizeInstanceSpaces(std::string& s)
 
 /** Parse instance string from nvme-update@<instance>.service.
  *  Args from code-manager: " <path_with_dashes> <version> <prefix_with_dashes>
- * <eid1> [eid2] ..." Replace '-' with '/' for path and prefix to recover actual
- * paths.
+ * <driveName1> [driveName2] ...". Replace '-' with '/' for path and prefix to
+ * recover actual paths.
  */
 std::optional<ParsedNvmeUpdateArgs>
     parseNvmeUpdateInstance(std::string instance)
@@ -165,7 +166,7 @@ std::optional<ParsedNvmeUpdateArgs>
     {
         tokens.push_back(std::move(t));
     }
-    // Need at least: path, version, prefix, one eid (code-manager may add
+    // Need at least: path, version, prefix, one target (code-manager may add
     // leading space -> empty token)
     if (tokens.size() < 4)
     {
@@ -190,55 +191,65 @@ std::optional<ParsedNvmeUpdateArgs>
     out.objectPathPrefix = dashToSlash(tokens[iPath + 2]);
     for (size_t i = iPath + 3; i < tokens.size(); ++i)
     {
-        if (tokens[i].empty())
+        if (!tokens[i].empty())
         {
-            continue;
-        }
-        try
-        {
-            int eid = std::stoi(tokens[i]);
-            if (eid >= 0 && eid <= 255)
-            {
-                out.eids.push_back(static_cast<uint8_t>(eid));
-            }
-        }
-        catch (...)
-        {
-            break;
+            out.targets.push_back(tokens[i]);
         }
     }
-    if (out.eids.empty())
+    if (out.targets.empty())
     {
         return std::nullopt;
     }
     return out;
 }
 
-std::string driveObjPath(uint8_t eid)
+std::string driveObjPath(const std::string& driveName)
 {
     return std::string("/xyz/openbmc_project/inventory/system/nvme/") +
-           std::string(drivePrefix) + std::to_string(eid);
+           driveName;
+}
+
+std::string driveNameFromTarget(std::string target)
+{
+    size_t lastSlash = target.find_last_of('/');
+    if (lastSlash != std::string::npos)
+    {
+        target = target.substr(lastSlash + 1);
+    }
+    return target;
+}
+
+std::shared_ptr<NVMeDevice> resolveDriveTarget(
+    const std::string& target,
+    std::unordered_map<uint8_t, std::shared_ptr<NVMeDevice>>& driveMap,
+    uint8_t& eid)
+{
+    std::string driveName = driveNameFromTarget(target);
+    for (const auto& [driveEid, drive] : driveMap)
+    {
+        if (drive && drive->getDriveName() == driveName)
+        {
+            eid = driveEid;
+            return drive;
+        }
+    }
+    return nullptr;
 }
 
 using Level = sdbusplus::xyz::openbmc_project::Logging::server::Entry::Level;
 using OperationStatus =
     sdbusplus::xyz::openbmc_project::Common::server::Progress::OperationStatus;
 
-/** Run full FW update for one EID on a dedicated thread: download chunk by
+/** Run full FW update for one drive on a dedicated thread: download chunk by
  *  chunk in a loop
  */
 void runFwUpdate(const std::shared_ptr<sdbusplus::asio::connection>& conn,
-                 const ParsedNvmeUpdateArgs& args, size_t eidIndex,
+                 const ParsedNvmeUpdateArgs& args, uint8_t eid,
+                 const std::string& driveName,
                  std::weak_ptr<NVMeDevice> weakDrive)
 {
-    if (eidIndex >= args.eids.size())
-    {
-        return;
-    }
-    uint8_t eid = args.eids[eidIndex];
-    std::string objPath = driveObjPath(eid);
-    std::string deviceInfo = std::string(redfishDrivePathPrefix) +
-                             std::string(drivePrefix) + std::to_string(eid);
+    std::string objPath = driveObjPath(driveName);
+    std::string deviceInfo = std::string(redfishDrivePathPrefix) + driveName;
 
     // Update progress only if drive is still alive (not power-offed).
     // Returns false if the drive was removed — caller should abort.
@@ -479,7 +490,7 @@ void onNvmeUpdateJobNew(
         logNoMatchingDevices(conn);
         return;
     }
-    if (args->eids.empty())
+    if (args->targets.empty())
     {
         lg2::warning(
             "No matching devices found for nvme-update instance: {INST}",
@@ -489,19 +500,21 @@ void onNvmeUpdateJobNew(
     }
     const ParsedNvmeUpdateArgs& argsCopy = *args;
     auto& driveMap = getDriveMap();
-    for (size_t i = 0; i < argsCopy.eids.size(); ++i)
+    for (const std::string& target : argsCopy.targets)
     {
-        uint8_t eid = argsCopy.eids[i];
-        auto it = driveMap.find(eid);
-        if (it == driveMap.end())
+        uint8_t eid = 0;
+        std::shared_ptr<NVMeDevice> drive = resolveDriveTarget(target, driveMap,
+                                                               eid);
+        if (!drive)
         {
-            lg2::warning("FW update: no drive for EID {EID}, skipping", "EID",
-                         static_cast<int>(eid));
+            lg2::warning("FW update: no drive for target {TARGET}, skipping",
+                         "TARGET", target);
             continue;
         }
-        std::weak_ptr<NVMeDevice> weakDrive = it->second;
-        std::thread([conn, argsCopy, i, weakDrive]() {
-            runFwUpdate(conn, argsCopy, i, weakDrive);
+        std::string driveName = drive->getDriveName();
+        std::weak_ptr<NVMeDevice> weakDrive = drive;
+        std::thread([conn, argsCopy, eid, driveName, weakDrive]() {
+            runFwUpdate(conn, argsCopy, eid, driveName, weakDrive);
         }).detach();
     }
 }

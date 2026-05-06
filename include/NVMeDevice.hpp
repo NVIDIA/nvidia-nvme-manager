@@ -74,7 +74,8 @@ class NVMeDevice :
                sdbusplus::asio::object_server& objectServer,
                std::shared_ptr<sdbusplus::asio::connection>& conn, uint8_t eid,
                uint32_t bus, int net, const std::vector<uint8_t>& addr,
-               const std::string& path);
+               const std::string& path, const std::string& formFactor,
+               const std::string& driveAssoc, const std::string& locCode);
     NVMeDevice(const NVMeDevice& other) = delete;
 
     NVMeDevice(NVMeDevice&& other) = delete;
@@ -148,8 +149,6 @@ class NVMeDevice :
         return bus;
     }
 
-    void updateFormFactor(const std::string& form);
-    void updateDriveAssociations();
     void erase(uint16_t overwritePasses, EraseMethod eraseType) override;
 
     // Software inventory methods
@@ -159,7 +158,6 @@ class NVMeDevice :
     std::string getFirmwareVersion();
 
     // Drive state management
-    void updateLocationCode(const std::string& locCode);
     void checkAndGenerateDriveEvent();
     uint8_t getEid() const
     {
@@ -168,6 +166,10 @@ class NVMeDevice :
     const std::string& getObjPath() const
     {
         return objPath;
+    }
+    const std::string& getDriveName() const
+    {
+        return driveIndex;
     }
     const std::string& getLocationCode() const
     {
