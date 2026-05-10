@@ -99,10 +99,6 @@ default_deps = [
     libnvme_mi_dep,
 ]
 
-if nvme_mi_sensors
-    default_deps += dependency('nvidia-tal', required: true)
-endif
-
 subdir('include')
 subdir('service_files')
 subdir('src')
