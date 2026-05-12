@@ -8,15 +8,17 @@
 #include "Thresholds.hpp"
 
 #include <phosphor-logging/lg2.hpp>
+#include <tal.hpp>
+
+#include <chrono>
+#include <cmath>
+#include <limits>
+#include <string>
 
 using nvme::sensors::configInterfaceName;
 using nvme::sensors::createAssociation;
 using nvme::sensors::escapePathForDbus;
 using nvme::sensors::unitDegreesC;
-
-#include <cmath>
-#include <limits>
-#include <string>
 
 static constexpr double maxReading = 127;
 static constexpr double minReading = 0;
@@ -197,6 +199,21 @@ void NVMeMiSensor::updateValue(double newValue)
     }
 
     checkThresholds();
+
+    std::string objPath = sensorInterface->get_object_path();
+    std::string ifaceName = sensorInterface->get_interface_name();
+    std::string parentChassis =
+        sdbusplus::message::object_path(configurationPath).parent_path();
+    nv::sensor_aggregation::DbusVariantType propValue = newValue;
+    std::vector<uint8_t> rawPropValue = {};
+    uint64_t timestamp =
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now().time_since_epoch())
+            .count();
+    tal::TelemetryAggregator::updateTelemetry(objPath, ifaceName, "Value",
+                                              rawPropValue, timestamp, 0,
+                                              propValue, parentChassis);
+
     if (!std::isnan(newValue))
     {
         markFunctional(true);
