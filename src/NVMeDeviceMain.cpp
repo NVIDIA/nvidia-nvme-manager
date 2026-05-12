@@ -11,6 +11,9 @@
 #include <boost/asio/steady_timer.hpp>
 #include <dbusutil.hpp>
 #include <nlohmann/json.hpp>
+#ifdef NVME_MI_SENSORS
+#include <tal.hpp>
+#endif
 
 #include <cerrno>
 #include <cstring>
@@ -1038,6 +1041,17 @@ int main(int argc, char* argv[])
         objectServer.add_manager("/xyz/openbmc_project/sensors");
 #ifdef FIRMWARE_INVENTORY
         objectServer.add_manager("/xyz/openbmc_project/software");
+#endif
+#ifdef NVME_MI_SENSORS
+        if (tal::TelemetryAggregator::namespaceInit(tal::ProcessType::Producer,
+                                                    "nvmesensor"))
+        {
+            lg2::info("Successfully registered TAL namespace for NVMe sensors");
+        }
+        else
+        {
+            lg2::error("Failed to register TAL namespace for NVMe sensors");
+        }
 #endif
 
         std::vector<std::unique_ptr<sdbusplus::bus::match::match>> matches;

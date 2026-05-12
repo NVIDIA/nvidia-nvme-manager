@@ -365,6 +365,11 @@ void NVMeMiSensorManager::removeSensors(uint8_t eid)
     auto it = sensorContexts.find(eid);
     if (it != sensorContexts.end())
     {
+        if (it->second->tempSensor)
+        {
+            it->second->tempSensor->updateValue(
+                std::numeric_limits<double>::quiet_NaN());
+        }
         sensorContexts.erase(it);
     }
 }
