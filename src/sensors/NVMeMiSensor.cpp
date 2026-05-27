@@ -20,9 +20,6 @@ using nvme::sensors::createAssociation;
 using nvme::sensors::escapePathForDbus;
 using nvme::sensors::unitDegreesC;
 
-static constexpr double maxReading = 127;
-static constexpr double minReading = 0;
-
 NVMeMiSensor::NVMeMiSensor(sdbusplus::asio::object_server& objectServer,
                            std::shared_ptr<sdbusplus::asio::connection>& conn,
                            const std::string& sensorName,
@@ -32,9 +29,6 @@ NVMeMiSensor::NVMeMiSensor(sdbusplus::asio::object_server& objectServer,
     thresholds(std::move(thresholdsIn)), eid(eid),
     name(escapePathForDbus(sensorName)), configurationPath(sensorConfiguration),
     configInterface(configInterfaceName(NVMeMiSensor::sensorType)),
-    maxValue(maxReading), minValue(minReading),
-    hysteresisTrigger((maxReading - minReading) * 0.01),
-    hysteresisPublish((maxReading - minReading) * 0.0001),
     objServer(objectServer), dbusConnection(conn)
 {
     for (auto& threshold : thresholds)

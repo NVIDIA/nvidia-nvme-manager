@@ -71,10 +71,12 @@ class NVMeMiSensor
     std::string configurationPath;
     std::string configInterface;
     double value = std::numeric_limits<double>::quiet_NaN();
-    double maxValue;
-    double minValue;
-    double hysteresisTrigger;
-    double hysteresisPublish;
+    static constexpr double maxReading = 127;
+    static constexpr double minReading = 0;
+    double maxValue{maxReading};
+    double minValue{minReading};
+    double hysteresisTrigger{(maxReading - minReading) * 0.01};
+    double hysteresisPublish{(maxReading - minReading) * 0.0001};
 
     sdbusplus::asio::object_server& objServer;
     std::shared_ptr<sdbusplus::asio::connection> dbusConnection;
