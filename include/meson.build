@@ -15,9 +15,12 @@ conf_data.set_quoted(
     'NVME_UPDATE_SERVICE_PREFIX',
     get_option('nvme_update_service_prefix'),
 )
+conf_data.set_quoted(
+    'NVME_UPDATE_REQUEST_DIR',
+    get_option('nvme_update_request_dir'),
+)
 configure_file(
     input: 'nvme-mi_config.h.in',
     output: 'nvme-mi_config.h',
     configuration: conf_data,
 )
-

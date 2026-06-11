@@ -3,8 +3,9 @@
  * AFFILIATES. SPDX-License-Identifier: Apache-2.0
  *
  * NVMe FW update handler: monitor nvme-update@.service via systemd JobNew,
- * parse instance (image path, version, object path prefix, drive targets), run
- * download+commit per drive, update Progress and emit FW update events.
+ * read request env files (image path, version, object path prefix, drive
+ * targets), run download+commit per drive, update Progress and emit FW update
+ * events.
  */
 
 #include <libnvme.h>
@@ -17,6 +18,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <filesystem>
 #include <fstream>
 #include <functional>
 #include <future>
@@ -136,67 +138,118 @@ bool shouldLogEverySeconds(std::chrono::steady_clock::time_point& lastLogTime,
     return false;
 }
 
-/** Replace literal 4-char sequence backslash-x-2-0 with a single space (0x20).
- */
-void normalizeInstanceSpaces(std::string& s)
+std::string trim(const std::string& s)
 {
-    const char space = '\x20';
-    const std::string escaped("\\x20"); // backslash, 'x', '2', '0'
-    for (std::string::size_type pos = 0;
-         (pos = s.find(escaped, pos)) != std::string::npos;)
+    const char* whitespace = " \t\r\n";
+    const auto first = s.find_first_not_of(whitespace);
+    if (first == std::string::npos)
     {
-        s.replace(pos, escaped.size(), 1, space);
-        pos += 1;
+        return "";
     }
+    const auto last = s.find_last_not_of(whitespace);
+    return s.substr(first, last - first + 1);
 }
 
-/** Parse instance string from nvme-update@<instance>.service.
- *  Args from code-manager: " <path_with_dashes> <version> <prefix_with_dashes>
- * <driveName1> [driveName2] ...". Replace '-' with '/' for path and prefix to
- * recover actual paths.
- */
-std::optional<ParsedNvmeUpdateArgs>
-    parseNvmeUpdateInstance(std::string instance)
+std::string unquoteEnvValue(std::string value)
 {
-    normalizeInstanceSpaces(instance);
-    std::istringstream iss(instance);
-    std::vector<std::string> tokens;
-    std::string t;
-    while (iss >> t)
+    value = trim(value);
+    if (value.size() < 2 || value.front() != '"' || value.back() != '"')
     {
-        tokens.push_back(std::move(t));
+        return value;
     }
-    // Need at least: path, version, prefix, one target (code-manager may add
-    // leading space -> empty token)
-    if (tokens.size() < 4)
+
+    std::string out;
+    bool escaped = false;
+    for (size_t i = 1; i + 1 < value.size(); ++i)
     {
-        return std::nullopt;
-    }
-    ParsedNvmeUpdateArgs out;
-    auto dashToSlash = [](std::string s) {
-        std::replace(s.begin(), s.end(), '-', '/');
-        return s;
-    };
-    size_t iPath = 0;
-    while (iPath < tokens.size() && tokens[iPath].empty())
-    {
-        ++iPath;
-    }
-    if (iPath + 3 > tokens.size())
-    {
-        return std::nullopt;
-    }
-    out.imagePath = dashToSlash(tokens[iPath]);
-    out.version = tokens[iPath + 1];
-    out.objectPathPrefix = dashToSlash(tokens[iPath + 2]);
-    for (size_t i = iPath + 3; i < tokens.size(); ++i)
-    {
-        if (!tokens[i].empty())
+        const char c = value[i];
+        if (escaped)
         {
-            out.targets.push_back(tokens[i]);
+            out += c;
+            escaped = false;
+        }
+        else if (c == '\\')
+        {
+            escaped = true;
+        }
+        else
+        {
+            out += c;
         }
     }
-    if (out.targets.empty())
+    if (escaped)
+    {
+        out += '\\';
+    }
+    return out;
+}
+
+std::vector<std::string> splitTargets(const std::string& targetList)
+{
+    std::istringstream iss(targetList);
+    std::vector<std::string> targets;
+    std::string target;
+    while (iss >> target)
+    {
+        targets.push_back(std::move(target));
+    }
+    return targets;
+}
+
+std::filesystem::path requestFilePath(const std::string& requestId)
+{
+    return std::filesystem::path(nvmeUpdateRequestDir) / (requestId + ".env");
+}
+
+std::optional<ParsedNvmeUpdateArgs>
+    parseNvmeUpdateRequest(const std::string& requestId)
+{
+    std::ifstream envFile(requestFilePath(requestId));
+    if (!envFile)
+    {
+        lg2::warning("Failed to open nvme-update request file for {REQUEST}",
+                     "REQUEST", requestId);
+        return std::nullopt;
+    }
+
+    std::unordered_map<std::string, std::string> env;
+    std::string line;
+    while (std::getline(envFile, line))
+    {
+        line = trim(line);
+        if (line.empty() || line.front() == '#')
+        {
+            continue;
+        }
+        const auto eq = line.find('=');
+        if (eq == std::string::npos)
+        {
+            continue;
+        }
+        env.emplace(trim(line.substr(0, eq)),
+                    unquoteEnvValue(line.substr(eq + 1)));
+    }
+
+    ParsedNvmeUpdateArgs out;
+    if (auto it = env.find("FW_IMAGE"); it != env.end())
+    {
+        out.imagePath = it->second;
+    }
+    if (auto it = env.find("FW_VERSION"); it != env.end())
+    {
+        out.version = it->second;
+    }
+    if (auto it = env.find("FW_PREFIX"); it != env.end())
+    {
+        out.objectPathPrefix = it->second;
+    }
+    if (auto it = env.find("FW_TARGETS"); it != env.end())
+    {
+        out.targets = splitTargets(it->second);
+    }
+
+    if (out.imagePath.empty() || out.version.empty() ||
+        out.objectPathPrefix.empty() || out.targets.empty())
     {
         return std::nullopt;
     }
@@ -480,21 +533,21 @@ void onNvmeUpdateJobNew(
     {
         return;
     }
-    std::string instance = unitId.substr(
+    std::string requestId = unitId.substr(
         prefix.size(), unitId.size() - prefix.size() - suffix.size());
-    auto args = parseNvmeUpdateInstance(instance);
+    auto args = parseNvmeUpdateRequest(requestId);
     if (!args)
     {
-        lg2::warning("Failed to parse nvme-update instance: {INST}", "INST",
-                     instance);
+        lg2::warning("Failed to parse nvme-update request: {REQUEST}",
+                     "REQUEST", requestId);
         logNoMatchingDevices(conn);
         return;
     }
     if (args->targets.empty())
     {
         lg2::warning(
-            "No matching devices found for nvme-update instance: {INST}",
-            "INST", instance);
+            "No matching devices found for nvme-update request: {REQUEST}",
+            "REQUEST", requestId);
         logNoMatchingDevices(conn);
         return;
     }
