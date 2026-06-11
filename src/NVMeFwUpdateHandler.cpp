@@ -26,6 +26,7 @@
 #include <span>
 #include <sstream>
 #include <string>
+#include <system_error>
 #include <thread>
 #include <unordered_map>
 #include <vector>
@@ -39,7 +40,10 @@ namespace
 constexpr size_t fwUpdateChunkSize = 4096;
 constexpr uint32_t fwUpdateSlot = 0;
 constexpr size_t fwDownloadMaxRetries = 5;
+constexpr size_t fwCommitResetRestartMaxRetries = 1;
 constexpr int progressLogIntervalSec = 20;
+constexpr uint32_t nvmeStatusFieldMask = (NVME_SCT_MASK << NVME_SCT_SHIFT) |
+                                         (NVME_SC_MASK << NVME_SC_SHIFT);
 
 struct ParsedNvmeUpdateArgs
 {
@@ -240,6 +244,37 @@ using Level = sdbusplus::xyz::openbmc_project::Logging::server::Entry::Level;
 using OperationStatus =
     sdbusplus::xyz::openbmc_project::Common::server::Progress::OperationStatus;
 
+uint32_t nvmeStatusField(nvme_status_field status)
+{
+    return static_cast<uint32_t>(status) & nvmeStatusFieldMask;
+}
+
+constexpr uint32_t commandSpecificStatus(uint32_t statusCode)
+{
+    return (NVME_SCT_CMD_SPECIFIC << NVME_SCT_SHIFT) | statusCode;
+}
+
+bool isFwCommitNeedsResetStatus(nvme_status_field status)
+{
+    uint32_t sc = nvmeStatusField(status);
+    return sc == commandSpecificStatus(NVME_SC_FW_NEEDS_CONV_RESET) ||
+           sc == commandSpecificStatus(NVME_SC_FW_NEEDS_SUBSYS_RESET) ||
+           sc == commandSpecificStatus(NVME_SC_FW_NEEDS_RESET);
+}
+
+bool isFwCommitImageLostAfterReset(nvme_status_field status)
+{
+    // Host reset can discard the downloaded image before commit observes it.
+    return nvmeStatusField(status) ==
+           commandSpecificStatus(NVME_SC_FIRMWARE_IMAGE);
+}
+
+bool shouldRestartFwUpdateAfterCommitError(const std::error_code& ec,
+                                           nvme_status_field status)
+{
+    return ec && isFwCommitImageLostAfterReset(status);
+}
+
 /** Run full FW update for one drive on a dedicated thread: download chunk by
  *  chunk in a loop
  */
@@ -301,131 +336,163 @@ void runFwUpdate(const std::shared_ptr<sdbusplus::asio::connection>& conn,
     }
 
     const auto updateStartTime = std::chrono::steady_clock::now();
-    auto lastProgressLogTime = updateStartTime -
-                               std::chrono::seconds(progressLogIntervalSec + 1);
-    uint32_t offset = 0;
-    size_t downloadRetryCount = 0;
 
-    while (offset < fileSize)
+    for (size_t updateAttempt = 0;
+         updateAttempt <= fwCommitResetRestartMaxRetries; updateAttempt++)
     {
-        if (shouldLogEverySeconds(lastProgressLogTime, progressLogIntervalSec))
+        if (updateAttempt > 0)
         {
-            lg2::info(
-                "FW update EID {EID} downloading chunk at offset {OFFSET}",
-                "EID", static_cast<int>(eid), "OFFSET", offset);
-        }
-        size_t toRead = std::min(static_cast<size_t>(fwUpdateChunkSize),
-                                 static_cast<size_t>(fileSize - offset));
-        std::vector<char> buf(toRead);
-        file.seekg(offset, std::ios::beg);
-        file.read(buf.data(), static_cast<std::streamsize>(toRead));
-        size_t n = file.gcount();
-        if (n == 0)
-        {
-            auto msRead =
-                std::chrono::duration_cast<std::chrono::milliseconds>(
-                    std::chrono::steady_clock::now() - updateStartTime)
-                    .count();
-            lg2::error("FW update EID {EID} failed after {MS} ms: read error",
-                       "EID", static_cast<int>(eid), "MS", msRead);
-            setProgress(0, OperationStatus::Failed);
-            return;
-        }
-        buf.resize(n);
-
-        auto p = std::make_shared<
-            std::promise<std::pair<std::error_code, nvme_status_field>>>();
-        auto fut = p->get_future();
-        intf->adminFwDownload(
-            eid, offset, static_cast<uint32_t>(n), std::move(buf),
-            [p](const std::error_code& ec, nvme_status_field status) {
-            p->set_value({ec, status});
-        });
-        auto [ec, status] = fut.get();
-
-        if (ec)
-        {
-            if (downloadRetryCount < fwDownloadMaxRetries)
+            file.clear();
+            file.seekg(0, std::ios::beg);
+            if (!setProgress(0, OperationStatus::InProgress))
             {
-                downloadRetryCount++;
+                return;
+            }
+        }
+
+        auto lastProgressLogTime =
+            updateStartTime - std::chrono::seconds(progressLogIntervalSec + 1);
+        uint32_t offset = 0;
+        size_t downloadRetryCount = 0;
+
+        while (offset < fileSize)
+        {
+            if (shouldLogEverySeconds(lastProgressLogTime,
+                                      progressLogIntervalSec))
+            {
+                lg2::info(
+                    "FW update EID {EID} downloading chunk at offset {OFFSET}",
+                    "EID", static_cast<int>(eid), "OFFSET", offset);
+            }
+            size_t toRead = std::min(static_cast<size_t>(fwUpdateChunkSize),
+                                     static_cast<size_t>(fileSize - offset));
+            std::vector<char> buf(toRead);
+            file.seekg(offset, std::ios::beg);
+            file.read(buf.data(), static_cast<std::streamsize>(toRead));
+            size_t n = file.gcount();
+            if (n == 0)
+            {
+                auto msRead =
+                    std::chrono::duration_cast<std::chrono::milliseconds>(
+                        std::chrono::steady_clock::now() - updateStartTime)
+                        .count();
+                lg2::error(
+                    "FW update EID {EID} failed after {MS} ms: read error",
+                    "EID", static_cast<int>(eid), "MS", msRead);
+                setProgress(0, OperationStatus::Failed);
+                return;
+            }
+            buf.resize(n);
+
+            auto p = std::make_shared<
+                std::promise<std::pair<std::error_code, nvme_status_field>>>();
+            auto fut = p->get_future();
+            intf->adminFwDownload(
+                eid, offset, static_cast<uint32_t>(n), std::move(buf),
+                [p](const std::error_code& ec, nvme_status_field status) {
+                p->set_value({ec, status});
+            });
+            auto [ec, status] = fut.get();
+
+            if (ec)
+            {
+                if (downloadRetryCount < fwDownloadMaxRetries)
+                {
+                    downloadRetryCount++;
+                    lg2::warning(
+                        "FW download failed at offset {OFFSET} for EID {EID}, retry {RETRY}/{MAX}: {ERR}",
+                        "OFFSET", offset, "EID", static_cast<int>(eid), "RETRY",
+                        downloadRetryCount, "MAX", fwDownloadMaxRetries, "ERR",
+                        ec.message());
+                    continue;
+                }
+                auto ms =
+                    std::chrono::duration_cast<std::chrono::milliseconds>(
+                        std::chrono::steady_clock::now() - updateStartTime)
+                        .count();
+                lg2::error(
+                    "FW update EID {EID} failed after {MS} ms (download at offset {OFFSET} after {MAX} retries): {ERR}",
+                    "EID", static_cast<int>(eid), "MS", ms, "OFFSET", offset,
+                    "MAX", fwDownloadMaxRetries, "ERR", ec.message());
+                logTransferFailed(conn, deviceInfo, args.version, objPath);
+                setProgress(0, OperationStatus::Failed);
+                return;
+            }
+            downloadRetryCount = 0;
+            offset += static_cast<uint32_t>(n);
+            uint32_t pct =
+                (fileSize != 0U)
+                    ? static_cast<uint32_t>((static_cast<size_t>(offset) * 90) /
+                                            fileSize)
+                    : 0;
+            if (!setProgress(pct, OperationStatus::InProgress))
+            {
+                lg2::info(
+                    "FW update EID {EID} aborted: drive removed during download",
+                    "EID", static_cast<int>(eid));
+                return;
+            }
+        }
+
+        logAwaitToActivate(conn, deviceInfo, args.version, objPath);
+
+        auto pCommit = std::make_shared<
+            std::promise<std::pair<std::error_code, nvme_status_field>>>();
+        auto futCommit = pCommit->get_future();
+        intf->adminFwCommit(
+            eid, NVME_FW_COMMIT_CA_REPLACE_AND_ACTIVATE, fwUpdateSlot, false,
+            [pCommit](const std::error_code& ec, nvme_status_field status) {
+            pCommit->set_value({ec, status});
+        });
+        auto [ecCommit, statusCommit] = futCommit.get();
+
+        auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                      std::chrono::steady_clock::now() - updateStartTime)
+                      .count();
+        bool needsReset = isFwCommitNeedsResetStatus(statusCommit);
+        if (ecCommit)
+        {
+            if (shouldRestartFwUpdateAfterCommitError(ecCommit, statusCommit) &&
+                updateAttempt < fwCommitResetRestartMaxRetries)
+            {
                 lg2::warning(
-                    "FW download failed at offset {OFFSET} for EID {EID}, retry {RETRY}/{MAX}: {ERR}",
-                    "OFFSET", offset, "EID", static_cast<int>(eid), "RETRY",
-                    downloadRetryCount, "MAX", fwDownloadMaxRetries, "ERR",
-                    ec.message());
+                    "FW update EID {EID} commit lost downloaded image after reset, restarting firmware update attempt {ATTEMPT}/{MAX}: error {EC} status {STATUS}",
+                    "EID", static_cast<int>(eid), "ATTEMPT", updateAttempt + 2,
+                    "MAX", fwCommitResetRestartMaxRetries + 1, "EC",
+                    ecCommit.value(), "STATUS", nvmeStatusField(statusCommit));
                 continue;
             }
-            auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-                          std::chrono::steady_clock::now() - updateStartTime)
-                          .count();
-            lg2::error(
-                "FW update EID {EID} failed after {MS} ms (download at offset {OFFSET} after {MAX} retries): {ERR}",
-                "EID", static_cast<int>(eid), "MS", ms, "OFFSET", offset, "MAX",
-                fwDownloadMaxRetries, "ERR", ec.message());
-            logTransferFailed(conn, deviceInfo, args.version, objPath);
-            setProgress(0, OperationStatus::Failed);
-            return;
-        }
-        downloadRetryCount = 0;
-        offset += static_cast<uint32_t>(n);
-        uint32_t pct = (fileSize != 0U)
-                           ? static_cast<uint32_t>(
-                                 (static_cast<size_t>(offset) * 90) / fileSize)
-                           : 0;
-        if (!setProgress(pct, OperationStatus::InProgress))
-        {
-            lg2::info(
-                "FW update EID {EID} aborted: drive removed during download",
-                "EID", static_cast<int>(eid));
-            return;
-        }
-    }
-
-    logAwaitToActivate(conn, deviceInfo, args.version, objPath);
-
-    auto pCommit = std::make_shared<
-        std::promise<std::pair<std::error_code, nvme_status_field>>>();
-    auto futCommit = pCommit->get_future();
-    intf->adminFwCommit(
-        eid, NVME_FW_COMMIT_CA_REPLACE_AND_ACTIVATE, fwUpdateSlot, false,
-        [pCommit](const std::error_code& ec, nvme_status_field status) {
-        pCommit->set_value({ec, status});
-    });
-    auto [ecCommit, statusCommit] = futCommit.get();
-
-    auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-                  std::chrono::steady_clock::now() - updateStartTime)
-                  .count();
-    if (ecCommit)
-    {
-        /* "Needs reset" statuses mean the commit succeeded but activation
-         * requires a reset — treat them as success, not failure. */
-        auto sc = static_cast<uint32_t>(statusCommit);
-        bool needsReset = sc == ((NVME_SCT_CMD_SPECIFIC << NVME_SCT_SHIFT) |
-                                 NVME_SC_FW_NEEDS_CONV_RESET) ||
-                          sc == ((NVME_SCT_CMD_SPECIFIC << NVME_SCT_SHIFT) |
-                                 NVME_SC_FW_NEEDS_SUBSYS_RESET) ||
-                          sc == ((NVME_SCT_CMD_SPECIFIC << NVME_SCT_SHIFT) |
-                                 NVME_SC_FW_NEEDS_RESET);
-        if (!needsReset)
-        {
             lg2::error(
                 "FW update EID {EID} failed after {MS} ms: commit error {EC} status {STATUS}",
                 "EID", static_cast<int>(eid), "MS", ms, "EC", ecCommit.value(),
-                "STATUS", static_cast<uint32_t>(statusCommit));
+                "STATUS", nvmeStatusField(statusCommit));
             logActivateFailed(conn, deviceInfo, args.version, objPath);
             setProgress(0, OperationStatus::Failed);
             return;
         }
-        lg2::info(
-            "FW update EID {EID} committed in {MS} ms, activation pending reset (status {STATUS})",
-            "EID", static_cast<int>(eid), "MS", ms, "STATUS",
-            static_cast<uint32_t>(statusCommit));
+        if (needsReset)
+        {
+            lg2::info(
+                "FW update EID {EID} committed in {MS} ms, activation pending reset (status {STATUS})",
+                "EID", static_cast<int>(eid), "MS", ms, "STATUS",
+                nvmeStatusField(statusCommit));
+        }
+
+        lg2::info("FW update EID {EID} completed in {MS} ms", "EID",
+                  static_cast<int>(eid), "MS", ms);
+        logUpdateSuccessful(conn, deviceInfo, args.version, objPath);
+        setProgress(100, OperationStatus::Completed);
+        return;
     }
-    lg2::info("FW update EID {EID} completed in {MS} ms", "EID",
-              static_cast<int>(eid), "MS", ms);
-    logUpdateSuccessful(conn, deviceInfo, args.version, objPath);
-    setProgress(100, OperationStatus::Completed);
+
+    auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                  std::chrono::steady_clock::now() - updateStartTime)
+                  .count();
+    lg2::error(
+        "FW update EID {EID} failed after {MS} ms: restart attempts exhausted",
+        "EID", static_cast<int>(eid), "MS", ms);
+    logActivateFailed(conn, deviceInfo, args.version, objPath);
+    setProgress(0, OperationStatus::Failed);
 }
 
 /** Deduplicate JobNew: avoid running the same nvme-update@instance twice
