@@ -537,15 +537,6 @@ void runFwUpdate(const std::shared_ptr<sdbusplus::asio::connection>& conn,
         setProgress(100, OperationStatus::Completed);
         return;
     }
-
-    auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-                  std::chrono::steady_clock::now() - updateStartTime)
-                  .count();
-    lg2::error(
-        "FW update EID {EID} failed after {MS} ms: restart attempts exhausted",
-        "EID", static_cast<int>(eid), "MS", ms);
-    logActivateFailed(conn, deviceInfo, args.version, objPath);
-    setProgress(0, OperationStatus::Failed);
 }
 
 /** Deduplicate JobNew: avoid running the same nvme-update@instance twice
