@@ -31,6 +31,7 @@
 #include <system_error>
 #include <thread>
 #include <unordered_map>
+#include <variant>
 #include <vector>
 
 /** Defined in NVMeDeviceMain.cpp; used to resolve EID -> drive for FW update.
@@ -46,6 +47,11 @@ constexpr size_t fwCommitResetRestartMaxRetries = 1;
 constexpr int progressLogIntervalSec = 20;
 constexpr uint32_t nvmeStatusFieldMask = (NVME_SCT_MASK << NVME_SCT_SHIFT) |
                                          (NVME_SC_MASK << NVME_SC_SHIFT);
+constexpr const char* systemdService = "org.freedesktop.systemd1";
+constexpr const char* dbusPropertiesInterface =
+    "org.freedesktop.DBus.Properties";
+constexpr const char* systemdJobInterface = "org.freedesktop.systemd1.Job";
+constexpr const char* systemdJobTypeProperty = "JobType";
 
 struct ParsedNvmeUpdateArgs
 {
@@ -573,29 +579,13 @@ bool shouldSkipDuplicateJob(const std::string& unitId)
     return false;
 }
 
-void onNvmeUpdateJobNew(
+void handleNvmeUpdateStartJob(
     const std::shared_ptr<sdbusplus::asio::connection>& conn,
-    sdbusplus::message::message& msg)
+    const std::string& unitId)
 {
-    uint32_t jobId = 0;
-    sdbusplus::message::object_path jobPath;
-    std::string unitId;
-    try
-    {
-        msg.read(jobId, jobPath, unitId);
-    }
-    catch (const std::exception& e)
-    {
-        lg2::error("JobNew read failed: {ERR}", "ERR", e.what());
-        return;
-    }
     const std::string prefix(nvmeUpdateServicePrefix);
     const std::string suffix(".service");
-    if (unitId.size() < prefix.size() + suffix.size() ||
-        !unitId.starts_with(prefix) || !unitId.ends_with(suffix))
-    {
-        return;
-    }
+
     if (shouldSkipDuplicateJob(unitId))
     {
         return;
@@ -637,6 +627,64 @@ void onNvmeUpdateJobNew(
             runFwUpdate(conn, argsCopy, eid, driveName, weakDrive);
         }).detach();
     }
+}
+
+void onNvmeUpdateJobNew(
+    const std::shared_ptr<sdbusplus::asio::connection>& conn,
+    sdbusplus::message::message& msg)
+{
+    uint32_t jobId = 0;
+    sdbusplus::message::object_path jobPath;
+    std::string unitId;
+    try
+    {
+        msg.read(jobId, jobPath, unitId);
+    }
+    catch (const std::exception& e)
+    {
+        lg2::error("JobNew read failed: {ERR}", "ERR", e.what());
+        return;
+    }
+    const std::string prefix(nvmeUpdateServicePrefix);
+    const std::string suffix(".service");
+    if (unitId.size() < prefix.size() + suffix.size() ||
+        !unitId.starts_with(prefix) || !unitId.ends_with(suffix))
+    {
+        return;
+    }
+
+    const std::string jobPathStr = jobPath.str;
+    conn->async_method_call(
+        [conn, jobId, jobPathStr,
+         unitId](boost::system::error_code ec,
+                 std::variant<std::string> jobTypeVar) {
+        if (ec)
+        {
+            lg2::warning(
+                "Failed to read systemd JobType for nvme-update JobNew: job {JOB} path {PATH} unit {UNIT}: {ERROR}",
+                "JOB", jobId, "PATH", jobPathStr, "UNIT", unitId, "ERROR",
+                ec.message());
+            return;
+        }
+
+        const std::string* jobType = std::get_if<std::string>(&jobTypeVar);
+        if (jobType == nullptr)
+        {
+            lg2::warning(
+                "Unexpected systemd JobType variant for nvme-update JobNew: job {JOB} path {PATH} unit {UNIT}",
+                "JOB", jobId, "PATH", jobPathStr, "UNIT", unitId);
+            return;
+        }
+
+        if (*jobType != "start")
+        {
+            return;
+        }
+
+        handleNvmeUpdateStartJob(conn, unitId);
+    },
+        systemdService, jobPathStr, dbusPropertiesInterface, "Get",
+        systemdJobInterface, systemdJobTypeProperty);
 }
 
 } // anonymous namespace
