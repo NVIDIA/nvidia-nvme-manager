@@ -10,4 +10,5 @@ constexpr const char *drivePrefix = @PLATFORM_DRIVE_PREFIX@;
 constexpr const char *driveStateFile = @DRIVE_STATE_FILE@;
 constexpr const uint32_t bootProgressTimeout = @BOOT_PROGRESS_TIMEOUT@;
 constexpr const char *nvmeUpdateServicePrefix = @NVME_UPDATE_SERVICE_PREFIX@;
+constexpr const char *nvmeUpdateRequestDir = @NVME_UPDATE_REQUEST_DIR@;
 // clang-format on

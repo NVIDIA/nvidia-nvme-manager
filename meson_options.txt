@@ -58,3 +58,9 @@ option(
     value: 'nvme-update@',
     description: 'Systemd unit prefix for NVMe FW update service (unit id is prefix + instance + .service)',
 )
+option(
+    'nvme_update_request_dir',
+    type: 'string',
+    value: '/run/nvidia-nvme-update',
+    description: 'Directory containing nvme-update@ request environment files',
+)
