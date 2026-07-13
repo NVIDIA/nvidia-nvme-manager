@@ -121,7 +121,7 @@ int main(int argc, char* argv[])
         int exitCode = 0;
         boost::asio::steady_timer timeoutTimer(io);
         boost::asio::steady_timer progressChangeTimer(io);
-        std::vector<std::shared_ptr<sdbusplus::bus::match_t>> matches;
+        std::vector<std::shared_ptr<sdbusplus::match>> matches;
 
         auto checkDone = [&]() {
             if (done)
@@ -151,7 +151,7 @@ int main(int argc, char* argv[])
         {
             std::string path = target.starts_with("/") ? dashToSlash(target)
                                                        : prefix + target;
-            matches.push_back(std::make_shared<sdbusplus::bus::match_t>(
+            matches.push_back(std::make_shared<sdbusplus::match>(
                 static_cast<sdbusplus::bus_t&>(*conn),
                 "type='signal',member='PropertiesChanged',path='" + path +
                     "',arg0='" + progressInterface + "'",
