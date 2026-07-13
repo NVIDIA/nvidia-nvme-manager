@@ -14,7 +14,7 @@ using SoftwareVersion =
 class SoftwareInventoryManager
 {
   public:
-    explicit SoftwareInventoryManager(sdbusplus::bus_t& bus) : bus(bus) {}
+    explicit SoftwareInventoryManager(sdbusplus::bus::bus& bus) : bus(bus) {}
 
     // Create software inventory object for an NVMe device
     std::shared_ptr<SoftwareInventory> createNVMeSoftwareInventory(
@@ -92,7 +92,7 @@ class SoftwareInventoryManager
     }
 
   private:
-    sdbusplus::bus_t& bus;
+    sdbusplus::bus::bus& bus;
     std::unordered_map<std::string, std::shared_ptr<SoftwareInventory>>
         softwareInventoryMap;
 
