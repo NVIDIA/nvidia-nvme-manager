@@ -625,7 +625,7 @@ void onNvmeUpdateJobNew(
     sdbusplus::message::message& msg)
 {
     uint32_t jobId = 0;
-    sdbusplus::message::object_path jobPath;
+    sdbusplus::object_path jobPath;
     std::string unitId;
     try
     {
@@ -683,9 +683,9 @@ void onNvmeUpdateJobNew(
 void startNvmeFwUpdateMonitor(
     const std::shared_ptr<sdbusplus::asio::connection>& conn)
 {
-    static std::unique_ptr<sdbusplus::bus::match::match> match;
-    match = std::make_unique<sdbusplus::bus::match::match>(
-        static_cast<sdbusplus::bus::bus&>(*conn),
+    static std::unique_ptr<sdbusplus::match> match;
+    match = std::make_unique<sdbusplus::match>(
+        static_cast<sdbusplus::bus_t&>(*conn),
         "type='signal',sender='org.freedesktop.systemd1',"
         "path='/org/freedesktop/systemd1',"
         "interface='org.freedesktop.systemd1.Manager',member='JobNew'",
