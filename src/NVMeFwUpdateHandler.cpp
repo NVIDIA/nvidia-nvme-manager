@@ -683,8 +683,8 @@ void onNvmeUpdateJobNew(
 void startNvmeFwUpdateMonitor(
     const std::shared_ptr<sdbusplus::asio::connection>& conn)
 {
-    static std::unique_ptr<sdbusplus::bus::match_t> match;
-    match = std::make_unique<sdbusplus::bus::match_t>(
+    static std::unique_ptr<sdbusplus::match> match;
+    match = std::make_unique<sdbusplus::match>(
         static_cast<sdbusplus::bus_t&>(*conn),
         "type='signal',sender='org.freedesktop.systemd1',"
         "path='/org/freedesktop/systemd1',"
