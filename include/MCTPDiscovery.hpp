@@ -31,7 +31,7 @@ using BasicVariantType =
 using Properties = boost::container::flat_map<std::string, BasicVariantType>;
 using DbusObject = boost::container::flat_map<std::string, Properties>;
 using ManagedObjectType =
-    boost::container::flat_map<sdbusplus::object_path, DbusObject>;
+    boost::container::flat_map<sdbusplus::message::object_path, DbusObject>;
 
 using GetSubTreeType = std::vector<
     std::pair<std::string,

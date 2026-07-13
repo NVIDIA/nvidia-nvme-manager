@@ -197,7 +197,7 @@ void NVMeMiSensor::updateValue(double newValue)
     std::string objPath = sensorInterface->get_object_path();
     std::string ifaceName = sensorInterface->get_interface_name();
     std::string parentChassis =
-        sdbusplus::object_path(configurationPath).parent_path();
+        sdbusplus::message::object_path(configurationPath).parent_path();
     nv::sensor_aggregation::DbusVariantType propValue = newValue;
     std::vector<uint8_t> rawPropValue = {};
     uint64_t timestamp =
