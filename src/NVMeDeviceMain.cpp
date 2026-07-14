@@ -921,7 +921,7 @@ static void
         return;
     }
 
-    sdbusplus::message::object_path objectPath;
+    sdbusplus::object_path objectPath;
     std::vector<std::string> interfacesRemoved;
 
     try
@@ -1054,7 +1054,7 @@ int main(int argc, char* argv[])
         }
 #endif
 
-        std::vector<std::unique_ptr<sdbusplus::bus::match::match>> matches;
+        std::vector<std::unique_ptr<sdbusplus::bus::match_t>> matches;
 
         boost::asio::post(io, [&]() {
             createDrives(io, objectServer, bus);
@@ -1087,11 +1087,11 @@ int main(int argc, char* argv[])
         std::string storagePath =
             "/xyz/openbmc_project/inventory/item/storage/1";
         std::unique_ptr<Storage> storageIface = std::make_unique<Storage>(
-            static_cast<sdbusplus::bus::bus&>(*bus), storagePath.c_str());
+            static_cast<sdbusplus::bus_t&>(*bus), storagePath.c_str());
         storageIface->emit_added();
 
-        auto emIfaceAddedMatch = std::make_unique<sdbusplus::bus::match::match>(
-            static_cast<sdbusplus::bus::bus&>(*bus),
+        auto emIfaceAddedMatch = std::make_unique<sdbusplus::bus::match_t>(
+            static_cast<sdbusplus::bus_t&>(*bus),
             "type='signal',member='InterfacesAdded',arg0path='" +
                 std::string("/xyz/openbmc_project/inventory/system/nvme") +
                 "/'",
@@ -1108,12 +1108,11 @@ int main(int argc, char* argv[])
         // refreshSensors() is a no-op once all drives have sensor contexts, so
         // spurious signals (e.g. fan/temp configs) add no real overhead.
         boost::asio::steady_timer emSensorConfigTimer(io);
-        auto emSensorConfigMatch =
-            std::make_unique<sdbusplus::bus::match::match>(
-                static_cast<sdbusplus::bus::bus&>(*bus),
-                "type='signal',member='InterfacesAdded',"
-                "arg0path='/xyz/openbmc_project/inventory/'",
-                [&emSensorConfigTimer](sdbusplus::message::message&) {
+        auto emSensorConfigMatch = std::make_unique<sdbusplus::bus::match_t>(
+            static_cast<sdbusplus::bus_t&>(*bus),
+            "type='signal',member='InterfacesAdded',"
+            "arg0path='/xyz/openbmc_project/inventory/'",
+            [&emSensorConfigTimer](sdbusplus::message::message&) {
             emSensorConfigTimer.expires_after(std::chrono::seconds(1));
             emSensorConfigTimer.async_wait(
                 [](const boost::system::error_code& ec) {
@@ -1155,8 +1154,8 @@ int main(int argc, char* argv[])
             });
         };
 
-        auto ifaceAddedMatch = std::make_unique<sdbusplus::bus::match::match>(
-            static_cast<sdbusplus::bus::bus&>(*bus),
+        auto ifaceAddedMatch = std::make_unique<sdbusplus::bus::match_t>(
+            static_cast<sdbusplus::bus_t&>(*bus),
             "type='signal',member='InterfacesAdded',arg0path='" +
                 std::string(mctpEpsPath) + "/'",
             eventHandler);
@@ -1164,8 +1163,8 @@ int main(int argc, char* argv[])
 
         // Watch for mctp service to remove configuration interfaces
         // so the corresponding Drives can be removed.
-        auto ifaceRemovedMatch = std::make_unique<sdbusplus::bus::match::match>(
-            static_cast<sdbusplus::bus::bus&>(*bus),
+        auto ifaceRemovedMatch = std::make_unique<sdbusplus::bus::match_t>(
+            static_cast<sdbusplus::bus_t&>(*bus),
             "type='signal',member='InterfacesRemoved',arg0path='" +
                 std::string(mctpEpsPath) + "/'",
             [&filterTimer, bus, &io](sdbusplus::message::message& msg) {
@@ -1176,8 +1175,8 @@ int main(int argc, char* argv[])
 
         // Watch for MCTP Connectivity property changes on all endpoints
         // Monitor au.com.codeconstruct.MCTP.Endpoint1 interface
-        auto connectivityMatch = std::make_unique<sdbusplus::bus::match::match>(
-            static_cast<sdbusplus::bus::bus&>(*bus),
+        auto connectivityMatch = std::make_unique<sdbusplus::bus::match_t>(
+            static_cast<sdbusplus::bus_t&>(*bus),
             "type='signal',member='PropertiesChanged',path_namespace='" +
                 std::string(mctpEpsPath) +
                 "',arg0='au.com.codeconstruct.MCTP.Endpoint1'",
@@ -1209,8 +1208,8 @@ int main(int argc, char* argv[])
             }
         });
 
-        auto bootProgressMatch = std::make_unique<sdbusplus::bus::match::match>(
-            static_cast<sdbusplus::bus::bus&>(*bus),
+        auto bootProgressMatch = std::make_unique<sdbusplus::bus::match_t>(
+            static_cast<sdbusplus::bus_t&>(*bus),
             "type='signal',interface='org.freedesktop.DBus.Properties',"
             "member='PropertiesChanged',"
             "path='/xyz/openbmc_project/state/host0',"
@@ -1258,8 +1257,8 @@ int main(int argc, char* argv[])
         // Monitor host power state to clean up drives on power-off
         // NVMe drives are power-on devices and must be reinitialized after
         // power cycle
-        auto hostStateMatch = std::make_unique<sdbusplus::bus::match::match>(
-            static_cast<sdbusplus::bus::bus&>(*bus),
+        auto hostStateMatch = std::make_unique<sdbusplus::bus::match_t>(
+            static_cast<sdbusplus::bus_t&>(*bus),
             "type='signal',interface='org.freedesktop.DBus.Properties',"
             "member='PropertiesChanged',"
             "path='/xyz/openbmc_project/state/host0',"
