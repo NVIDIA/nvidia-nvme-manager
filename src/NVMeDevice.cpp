@@ -30,7 +30,7 @@ NVMeDevice::NVMeDevice(boost::asio::io_context& io,
                        const std::string& path, const std::string& formFactor,
                        const std::string& driveAssoc,
                        const std::string& locCode) :
-    NvmeInterfaces(static_cast<sdbusplus::bus::bus&>(*conn), path.c_str(),
+    NvmeInterfaces(static_cast<sdbusplus::bus_t&>(*conn), path.c_str(),
                    NvmeInterfaces::action::defer_emit),
     driveAssociation(driveAssoc), conn(conn), objServer(objectServer),
     scanTimer(io), initRetryTimer(io), objPath(path), eid(eid), bus(bus),
