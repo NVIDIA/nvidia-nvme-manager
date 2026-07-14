@@ -32,3 +32,15 @@ executable(
     install: true,
 )
 
+if get_option('mux_manager').enabled()
+    executable(
+        'nvme-mux-manager',
+        sources: 'NVMeMuxManager.cpp',
+        dependencies: [nlohmann_json, phosphor_logging_dep, sdbusplus],
+        implicit_include_directories: false,
+        include_directories: '../include',
+        link_args: '-Wl,--gc-sections',
+        install: true,
+    )
+endif
+

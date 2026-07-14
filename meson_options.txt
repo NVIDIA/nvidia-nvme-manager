@@ -64,3 +64,9 @@ option(
     value: '/run/nvidia-nvme-update',
     description: 'Directory containing nvme-update@ request environment files',
 )
+option(
+    'mux_manager',
+    type: 'feature',
+    value: 'disabled',
+    description: 'Build nvme-mux-manager: binds/unbinds pca954x I2C MUX devices on chassis power state changes',
+)

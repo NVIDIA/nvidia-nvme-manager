@@ -1,0 +1,12 @@
+[Unit]
+Description=NVMe pca954x I2C MUX manager
+After=xyz.openbmc_project.Chassis.Control.Power@0.service
+
+[Service]
+Restart=always
+RestartSec=3
+ExecStart=/usr/bin/nvme-mux-manager
+SyslogIdentifier=nvme-mux-manager
+
+[Install]
+WantedBy=multi-user.target

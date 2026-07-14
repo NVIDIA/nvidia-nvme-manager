@@ -1,5 +1,9 @@
 unit_files = [['nvidia-nvme-manager.service']]
 
+if get_option('mux_manager').enabled()
+    unit_files += [['nvme-mux-manager.service']]
+endif
+
 foreach tuple : unit_files
     configure_file(
         copy: true,
