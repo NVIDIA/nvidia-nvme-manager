@@ -56,7 +56,7 @@ void GetSensorConfiguration::getPath(const std::string& path,
             return;
         }
 
-        sdbusplus::message::object_path objPath(path);
+        sdbusplus::object_path objPath(path);
         self->respData[objPath][interface] = std::move(data);
     },
         owner, path, "org.freedesktop.DBus.Properties", "GetAll", interface);

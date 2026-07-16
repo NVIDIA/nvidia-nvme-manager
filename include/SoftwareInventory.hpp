@@ -25,7 +25,7 @@ using AssociationList =
 class SoftwareInventory : public SoftwareInventoryInterfaces
 {
   public:
-    SoftwareInventory(sdbusplus::bus::bus& bus, const std::string& path) :
+    SoftwareInventory(sdbusplus::bus_t& bus, const std::string& path) :
         SoftwareInventoryInterfaces(
             bus, path.c_str(),
             SoftwareInventoryInterfaces::action::emit_interface_added)
