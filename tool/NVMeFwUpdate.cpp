@@ -155,7 +155,7 @@ int main(int argc, char* argv[])
                 static_cast<sdbusplus::bus_t&>(*conn),
                 "type='signal',member='PropertiesChanged',path='" + path +
                     "',arg0='" + progressInterface + "'",
-                [&, target, path](sdbusplus::message::message& msg) {
+                [&, target, path](sdbusplus::message_t& msg) {
                 targetsWithProgress.insert(target);
                 std::string iface;
                 std::map<std::string, std::variant<std::string>> props;

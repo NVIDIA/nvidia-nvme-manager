@@ -622,7 +622,7 @@ void handleNvmeUpdateStartJob(
 
 void onNvmeUpdateJobNew(
     const std::shared_ptr<sdbusplus::asio::connection>& conn,
-    sdbusplus::message::message& msg)
+    sdbusplus::message_t& msg)
 {
     uint32_t jobId = 0;
     sdbusplus::object_path jobPath;
@@ -689,8 +689,6 @@ void startNvmeFwUpdateMonitor(
         "type='signal',sender='org.freedesktop.systemd1',"
         "path='/org/freedesktop/systemd1',"
         "interface='org.freedesktop.systemd1.Manager',member='JobNew'",
-        [conn](sdbusplus::message::message& msg) {
-        onNvmeUpdateJobNew(conn, msg);
-    });
+        [conn](sdbusplus::message_t& msg) { onNvmeUpdateJobNew(conn, msg); });
     lg2::info("NVMe FW update monitor started");
 }

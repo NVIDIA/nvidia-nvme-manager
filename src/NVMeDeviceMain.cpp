@@ -711,7 +711,7 @@ static bool isHostOff(const std::shared_ptr<sdbusplus::asio::connection>& conn)
 }
 
 static void connectivityChanged(
-    sdbusplus::message::message& message,
+    sdbusplus::message_t& message,
     const std::shared_ptr<sdbusplus::asio::connection>& /* conn */,
     const std::string& mctpPath)
 {
@@ -911,7 +911,7 @@ static void deferredDestroyDrive(
 }
 
 static void
-    interfaceRemoved(sdbusplus::message::message& message,
+    interfaceRemoved(sdbusplus::message_t& message,
                      const std::shared_ptr<sdbusplus::asio::connection>& conn,
                      boost::asio::io_context& io)
 {
@@ -1062,9 +1062,8 @@ int main(int argc, char* argv[])
         });
 
         boost::asio::steady_timer filterTimer(io);
-        std::function<void(sdbusplus::message::message&)> emHandler =
-            [&filterTimer, &io, &objectServer,
-             &bus](sdbusplus::message::message&) {
+        std::function<void(sdbusplus::message_t&)> emHandler =
+            [&filterTimer, &io, &objectServer, &bus](sdbusplus::message_t&) {
             filterTimer.expires_after(std::chrono::seconds(1));
 
             filterTimer.async_wait([&](const boost::system::error_code& ec) {
@@ -1112,7 +1111,7 @@ int main(int argc, char* argv[])
             static_cast<sdbusplus::bus_t&>(*bus),
             "type='signal',member='InterfacesAdded',"
             "arg0path='/xyz/openbmc_project/inventory/'",
-            [&emSensorConfigTimer](sdbusplus::message::message&) {
+            [&emSensorConfigTimer](sdbusplus::message_t&) {
             emSensorConfigTimer.expires_after(std::chrono::seconds(1));
             emSensorConfigTimer.async_wait(
                 [](const boost::system::error_code& ec) {
@@ -1132,9 +1131,8 @@ int main(int argc, char* argv[])
 #endif
 
         boost::asio::steady_timer debounceTimer(io);
-        std::function<void(sdbusplus::message::message&)> eventHandler =
-            [&debounceTimer, &io, &objectServer,
-             &bus](sdbusplus::message::message&) {
+        std::function<void(sdbusplus::message_t&)> eventHandler =
+            [&debounceTimer, &io, &objectServer, &bus](sdbusplus::message_t&) {
             // this implicitly cancels the timer
             debounceTimer.expires_after(std::chrono::seconds(1));
 
@@ -1167,7 +1165,7 @@ int main(int argc, char* argv[])
             static_cast<sdbusplus::bus_t&>(*bus),
             "type='signal',member='InterfacesRemoved',arg0path='" +
                 std::string(mctpEpsPath) + "/'",
-            [&filterTimer, bus, &io](sdbusplus::message::message& msg) {
+            [&filterTimer, bus, &io](sdbusplus::message_t& msg) {
             filterTimer.cancel();
             interfaceRemoved(msg, bus, io);
         });
@@ -1180,7 +1178,7 @@ int main(int argc, char* argv[])
             "type='signal',member='PropertiesChanged',path_namespace='" +
                 std::string(mctpEpsPath) +
                 "',arg0='au.com.codeconstruct.MCTP.Endpoint1'",
-            [bus](sdbusplus::message::message& msg) {
+            [bus](sdbusplus::message_t& msg) {
             std::string path(msg.get_path());
             connectivityChanged(msg, bus, path);
         });
@@ -1214,7 +1212,7 @@ int main(int argc, char* argv[])
             "member='PropertiesChanged',"
             "path='/xyz/openbmc_project/state/host0',"
             "arg0='xyz.openbmc_project.State.Boot.Progress'",
-            [bus, bootProgressTimer](sdbusplus::message::message& msg) {
+            [bus, bootProgressTimer](sdbusplus::message_t& msg) {
             if (getColdRemovalCheckComplete())
             {
                 return; // Already checked
@@ -1264,7 +1262,7 @@ int main(int argc, char* argv[])
             "path='/xyz/openbmc_project/state/host0',"
             "arg0='xyz.openbmc_project.State.Host'",
             [bootProgressTimer, &io, &objectServer,
-             &bus](sdbusplus::message::message& msg) {
+             &bus](sdbusplus::message_t& msg) {
             std::string interfaceName;
             std::map<std::string, std::variant<std::string>> changedProperties;
 
