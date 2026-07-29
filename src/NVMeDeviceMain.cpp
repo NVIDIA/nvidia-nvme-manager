@@ -1287,9 +1287,21 @@ int main(int argc, char* argv[])
                         auto& driveMap = getDriveMap();
                         if (!driveMap.empty())
                         {
+                            // Cancel every endpoint before closing any one of
+                            // them so all old work in the shared worker queue
+                            // can drain without issuing more transport calls.
+                            for (auto& [_, drive] : driveMap)
+                            {
+                                drive->cancelPendingOperations();
+                            }
+
                             for (auto it = driveMap.begin();
                                  it != driveMap.end();)
                             {
+                                if (auto intf = it->second->getIntf(); intf)
+                                {
+                                    intf->closeEndpoint();
+                                }
                                 deferredDestroyDrive(io, driveMap, it++);
                             }
                         }

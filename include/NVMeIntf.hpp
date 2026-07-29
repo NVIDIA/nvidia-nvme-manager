@@ -121,6 +121,14 @@ class NVMeBasicIntf
 class NVMeMiIntf
 {
   public:
+    // Stop accepting commands and cancel commands that have not started.
+    // Implementations that do not use an asynchronous command queue may leave
+    // the default no-op behavior.
+    virtual void cancelPendingCommands() {}
+
+    // Close the transport before a replacement endpoint is created.
+    virtual void closeEndpoint() {}
+
     constexpr static std::string_view statusToString(nvme_mi_resp_status status)
     {
         switch (status)

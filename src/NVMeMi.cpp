@@ -19,6 +19,7 @@
 #include <vector>
 
 constexpr size_t maxNVMeMILength = 4096;
+constexpr unsigned int nvmeMiResponseTimeoutMs = 1000;
 
 std::map<int, std::shared_ptr<NVMeMi::Worker>>& NVMeMi::getWorkerMap()
 {
@@ -88,6 +89,12 @@ NVMeMi::NVMeMi(boost::asio::io_context& io,
                    this->addr, "MSG", str);
         return;
     }
+
+    if (nvme_mi_ep_set_timeout(nvmeEP, nvmeMiResponseTimeoutMs) != 0)
+    {
+        lg2::warning("Failed to set NVMe-MI response timeout: eid={EID}", "EID",
+                     static_cast<int>(eid));
+    }
 }
 
 NVMeMi::Worker::Worker()
@@ -148,6 +155,29 @@ nvme_mi_ctrl_t NVMeMi::getController(uint8_t eid)
     return nullptr;
 }
 
+void NVMeMi::cancelPendingCommands()
+{
+    commandsCancelled.store(true, std::memory_order_release);
+}
+
+void NVMeMi::closeEndpoint()
+{
+    commandsCancelled.store(true, std::memory_order_release);
+
+    // Wait only for a transport call already in progress. Commands still in
+    // the worker queue observe commandsCancelled before taking this mutex and
+    // release their references without touching the closed endpoint.
+    std::lock_guard<std::mutex> endpointLock(*endpointMux);
+
+    if (nvmeEP != nullptr)
+    {
+        lg2::info("Closing MCTP socket: net={NET}, eid={EID}, addr={ADDR}",
+                  "NET", net, "EID", static_cast<int>(eid), "ADDR", addr);
+        nvme_mi_close(nvmeEP);
+        nvmeEP = nullptr;
+    }
+}
+
 void NVMeMi::Worker::post(std::function<void(void)>&& func)
 {
     if (!workerStop)
@@ -165,8 +195,25 @@ void NVMeMi::Worker::post(std::function<void(void)>&& func)
 
 void NVMeMi::post(std::function<void(void)>&& func)
 {
+    if (commandsCancelled.load(std::memory_order_acquire))
+    {
+        throw std::runtime_error("NVMeMi commands have been cancelled");
+    }
+
     worker->post([self{shared_from_this()}, func{std::move(func)}]() {
+        if (self->commandsCancelled.load(std::memory_order_acquire))
+        {
+            return;
+        }
+
         std::lock_guard<std::mutex> lock(*self->endpointMux);
+
+        // Cancellation may race with this task waiting for the endpoint.
+        if (self->commandsCancelled.load(std::memory_order_acquire))
+        {
+            return;
+        }
+
         func();
     });
 }
