@@ -193,6 +193,10 @@ class NVMeDevice :
         operationsCancelled = true;
         scanTimer.cancel();
         initRetryTimer.cancel();
+        if (intf)
+        {
+            intf->cancelPendingCommands();
+        }
     }
 
     bool backupDeviceFault(bool value) override
