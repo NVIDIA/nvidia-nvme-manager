@@ -76,6 +76,24 @@ static std::optional<eid_t> parseEidFromObjectPath(const std::string& path);
 static void checkForColdRemovedDrives(
     const std::shared_ptr<sdbusplus::asio::connection>& conn);
 
+static void removeDuplicateDriveStates(Json& driveStates, uint8_t eid)
+{
+    bool found = false;
+    for (auto drive = driveStates.begin(); drive != driveStates.end();)
+    {
+        if (drive->contains("eid") && (*drive)["eid"] == eid)
+        {
+            if (found)
+            {
+                drive = driveStates.erase(drive);
+                continue;
+            }
+            found = true;
+        }
+        ++drive;
+    }
+}
+
 struct PendingMCTPEndpoint
 {
     eid_t eid = 0;
@@ -458,6 +476,8 @@ void updateSingleDriveState(uint8_t eid)
             return;
         }
 
+        removeDuplicateDriveStates(driveStates, eid);
+
         // Build the new drive state
         Json newDriveState;
         newDriveState["eid"] = eid;
@@ -481,8 +501,7 @@ void updateSingleDriveState(uint8_t eid)
         bool found = false;
         for (auto& drive : driveStates)
         {
-            if (!locCode.empty() && drive.contains("locationCode") &&
-                drive["locationCode"] == locCode)
+            if (drive.contains("eid") && drive["eid"] == eid)
             {
                 drive = newDriveState;
                 found = true;
@@ -554,6 +573,8 @@ static void markDriveAsRemoved(uint8_t eid)
                 }
             }
         }
+
+        removeDuplicateDriveStates(driveStates, eid);
 
         // Find and update the drive entry
         bool found = false;
@@ -818,6 +839,8 @@ static void checkForColdRemovedDrives(
             return;
         }
 
+        std::set<uint8_t> processedEids;
+
         // Check each drive in state file
         for (const auto& drive : driveStates)
         {
@@ -841,6 +864,11 @@ static void checkForColdRemovedDrives(
             // cold-removed
             if (!getDiscoveredDriveEids().contains(eid))
             {
+                if (!processedEids.insert(eid).second)
+                {
+                    continue;
+                }
+
                 std::string location = drive.contains("locationCode")
                                            ? drive["locationCode"]
                                            : "Unknown Location";
