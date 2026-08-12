@@ -27,7 +27,8 @@ using nvme::sensors::SensorBaseConfigMap;
 #include <vector>
 
 // NVMe-MI NSS and CTEMP constants (from NVMe-MI spec)
-constexpr uint8_t nvmeMiNssDriveFault = (1 << 5);
+constexpr uint8_t nvmeMiNssDriveFunctional = (1 << 5);
+constexpr uint8_t nvmeMiSmartWarningsMask = 0x1F;
 constexpr uint8_t nvmeMiCtempNoData = 0x80;
 constexpr uint8_t nvmeMiCtempSensorFail = 0x81;
 constexpr uint8_t nvmeMiCtempMaxTemp = 0x7F;
@@ -346,12 +347,14 @@ void NVMeMiSensorManager::updateSensors(uint8_t eid,
         bool present = true;
         bool functional = true;
         bool fault = false;
-        if ((ss->nss & nvmeMiNssDriveFault) != 0)
+        if ((ss->nss & nvmeMiNssDriveFunctional) == 0)
         {
             fault = true;
             functional = false;
         }
-        if (ss->sw != 0)
+        // NVMe-MI inverts the defined NVMe SMART Critical Warning bits: a
+        // cleared bit signals a warning, while a set bit is healthy.
+        if ((ss->sw & nvmeMiSmartWarningsMask) != nvmeMiSmartWarningsMask)
         {
             fault = true;
             functional = false;
