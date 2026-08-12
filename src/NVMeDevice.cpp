@@ -941,8 +941,7 @@ void NVMeDevice::checkAndGenerateDriveEvent()
         bool found = false;
         for (const auto& drive : driveStates)
         {
-            if (!currentLoc.empty() && drive.contains("locationCode") &&
-                drive["locationCode"] == currentLoc)
+            if (drive.contains("eid") && drive["eid"] == eid)
             {
                 found = true;
                 std::string connectivity = drive.contains("connectivity")
