@@ -949,7 +949,7 @@ static void
         return;
     }
 
-    sdbusplus::object_path objectPath;
+    sdbusplus::message::object_path objectPath;
     std::vector<std::string> interfacesRemoved;
 
     try

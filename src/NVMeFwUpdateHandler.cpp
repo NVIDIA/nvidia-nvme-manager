@@ -625,7 +625,7 @@ void onNvmeUpdateJobNew(
     sdbusplus::message::message& msg)
 {
     uint32_t jobId = 0;
-    sdbusplus::object_path jobPath;
+    sdbusplus::message::object_path jobPath;
     std::string unitId;
     try
     {
