@@ -53,6 +53,12 @@ option(
     description: 'Timeout in seconds to wait for OSRunning boot progress before checking for cold-removed drives (default: 300 seconds / 5 minutes)',
 )
 option(
+    'fw_update_progress_timeout',
+    type: 'integer',
+    value: 600,
+    description: 'Timeout in seconds to wait for all drive firmware updates to complete (default: 600 seconds / 10 minutes)',
+)
+option(
     'nvme_update_service_prefix',
     type: 'string',
     value: 'nvme-update@',
