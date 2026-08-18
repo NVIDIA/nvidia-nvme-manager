@@ -312,6 +312,7 @@ void NVMeDevice::initialize()
     }
     initialized = true;
     presence = false;
+    NVMeStatus::smartWarnings("0", true);
 
     Drive::type(DriveType::SSD, true);
     Drive::protocol(DriveProtocol::NVMe, true);
@@ -448,7 +449,7 @@ void NVMeDevice::markFunctional(bool functional)
         {
             OperationalStatus::functional(true, true);
             OperationalStatus::state(OperationalStatus::StateType::None, true);
-            markStatus("ok");
+            markStatus(smartWarning != 0 ? "warning" : "ok");
         }
     }
     driveFunctional = functional;
@@ -725,7 +726,14 @@ void NVMeDevice::pollDrive()
 
                 self->NVMeStatus::smartWarnings(std::to_string(cw), true);
 
-                if (cw != 0)
+                if (!self->driveFunctional)
+                {
+                    // Preserve the critical health caused by a failed drive.
+                    // SMART warnings cannot make a non-functional drive less
+                    // severe.
+                    self->markStatus("critical");
+                }
+                else if (cw != 0)
                 {
                     self->markStatus("warning");
                 }

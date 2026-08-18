@@ -245,7 +245,7 @@ class NVMeDevice :
     boost::asio::steady_timer initRetryTimer;
 
     bool driveFunctional{false};
-    uint8_t smartWarning{0xff};
+    uint8_t smartWarning{0};
     NVMeIntf nvmeIntf;
     std::shared_ptr<NVMeMiIntf> intf;
     std::string driveIndex;
