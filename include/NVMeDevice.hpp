@@ -27,6 +27,7 @@
 #include <xyz/openbmc_project/State/Decorator/OperationalStatus/server.hpp>
 
 #include <functional>
+#include <optional>
 
 using Item = sdbusplus::xyz::openbmc_project::Inventory::server::Item;
 using Drive = sdbusplus::xyz::openbmc_project::Inventory::Item::server::Drive;
@@ -87,6 +88,7 @@ class NVMeDevice :
     void initialize();
     void queryController();
     void getDriveInfo();
+    void getDriveVpd();
     void getDriveLink();
     void pollDrive();
     void markFunctional(bool functional);
@@ -95,6 +97,8 @@ class NVMeDevice :
     void updateSanitizeStatus(EraseMethod type);
 
     static std::string stripString(std::span<const char> src);
+    static std::optional<std::string>
+        parseIpmiProductName(std::span<const uint8_t> productInfo);
     static std::string getManufacture(uint16_t vid);
     std::string driveAssociation;
 

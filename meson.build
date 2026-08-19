@@ -84,6 +84,14 @@ endif
 libnvme_dep = dependency('libnvme')
 libnvme_mi_dep = dependency('libnvme-mi')
 
+if cpp.has_function(
+    'nvme_mi_mi_xfer',
+    prefix: '#include <libnvme-mi.h>',
+    dependencies: libnvme_mi_dep,
+)
+    add_project_arguments('-DHAVE_NVME_MI_MI_XFER', language: 'cpp')
+endif
+
 systemd = dependency('systemd')
 systemd_system_unit_dir = systemd.get_variable(
     pkgconfig: 'systemdsystemunitdir',
