@@ -76,6 +76,24 @@ static std::optional<eid_t> parseEidFromObjectPath(const std::string& path);
 static void checkForColdRemovedDrives(
     const std::shared_ptr<sdbusplus::asio::connection>& conn);
 
+static void removeDuplicateDriveStates(Json& driveStates, uint8_t eid)
+{
+    bool found = false;
+    for (auto drive = driveStates.begin(); drive != driveStates.end();)
+    {
+        if (drive->contains("eid") && (*drive)["eid"] == eid)
+        {
+            if (found)
+            {
+                drive = driveStates.erase(drive);
+                continue;
+            }
+            found = true;
+        }
+        ++drive;
+    }
+}
+
 struct PendingMCTPEndpoint
 {
     eid_t eid = 0;
@@ -458,6 +476,8 @@ void updateSingleDriveState(uint8_t eid)
             return;
         }
 
+        removeDuplicateDriveStates(driveStates, eid);
+
         // Build the new drive state
         Json newDriveState;
         newDriveState["eid"] = eid;
@@ -481,8 +501,7 @@ void updateSingleDriveState(uint8_t eid)
         bool found = false;
         for (auto& drive : driveStates)
         {
-            if (!locCode.empty() && drive.contains("locationCode") &&
-                drive["locationCode"] == locCode)
+            if (drive.contains("eid") && drive["eid"] == eid)
             {
                 drive = newDriveState;
                 found = true;
@@ -554,6 +573,8 @@ static void markDriveAsRemoved(uint8_t eid)
                 }
             }
         }
+
+        removeDuplicateDriveStates(driveStates, eid);
 
         // Find and update the drive entry
         bool found = false;
@@ -818,6 +839,8 @@ static void checkForColdRemovedDrives(
             return;
         }
 
+        std::set<uint8_t> processedEids;
+
         // Check each drive in state file
         for (const auto& drive : driveStates)
         {
@@ -841,6 +864,11 @@ static void checkForColdRemovedDrives(
             // cold-removed
             if (!getDiscoveredDriveEids().contains(eid))
             {
+                if (!processedEids.insert(eid).second)
+                {
+                    continue;
+                }
+
                 std::string location = drive.contains("locationCode")
                                            ? drive["locationCode"]
                                            : "Unknown Location";
@@ -1054,7 +1082,7 @@ int main(int argc, char* argv[])
         }
 #endif
 
-        std::vector<std::unique_ptr<sdbusplus::bus::match::match>> matches;
+        std::vector<std::unique_ptr<sdbusplus::bus::match_t>> matches;
 
         boost::asio::post(io, [&]() {
             createDrives(io, objectServer, bus);
@@ -1087,11 +1115,11 @@ int main(int argc, char* argv[])
         std::string storagePath =
             "/xyz/openbmc_project/inventory/item/storage/1";
         std::unique_ptr<Storage> storageIface = std::make_unique<Storage>(
-            static_cast<sdbusplus::bus::bus&>(*bus), storagePath.c_str());
+            static_cast<sdbusplus::bus_t&>(*bus), storagePath.c_str());
         storageIface->emit_added();
 
-        auto emIfaceAddedMatch = std::make_unique<sdbusplus::bus::match::match>(
-            static_cast<sdbusplus::bus::bus&>(*bus),
+        auto emIfaceAddedMatch = std::make_unique<sdbusplus::bus::match_t>(
+            static_cast<sdbusplus::bus_t&>(*bus),
             "type='signal',member='InterfacesAdded',arg0path='" +
                 std::string("/xyz/openbmc_project/inventory/system/nvme") +
                 "/'",
@@ -1108,12 +1136,11 @@ int main(int argc, char* argv[])
         // refreshSensors() is a no-op once all drives have sensor contexts, so
         // spurious signals (e.g. fan/temp configs) add no real overhead.
         boost::asio::steady_timer emSensorConfigTimer(io);
-        auto emSensorConfigMatch =
-            std::make_unique<sdbusplus::bus::match::match>(
-                static_cast<sdbusplus::bus::bus&>(*bus),
-                "type='signal',member='InterfacesAdded',"
-                "arg0path='/xyz/openbmc_project/inventory/'",
-                [&emSensorConfigTimer](sdbusplus::message::message&) {
+        auto emSensorConfigMatch = std::make_unique<sdbusplus::bus::match_t>(
+            static_cast<sdbusplus::bus_t&>(*bus),
+            "type='signal',member='InterfacesAdded',"
+            "arg0path='/xyz/openbmc_project/inventory/'",
+            [&emSensorConfigTimer](sdbusplus::message::message&) {
             emSensorConfigTimer.expires_after(std::chrono::seconds(1));
             emSensorConfigTimer.async_wait(
                 [](const boost::system::error_code& ec) {
@@ -1155,8 +1182,8 @@ int main(int argc, char* argv[])
             });
         };
 
-        auto ifaceAddedMatch = std::make_unique<sdbusplus::bus::match::match>(
-            static_cast<sdbusplus::bus::bus&>(*bus),
+        auto ifaceAddedMatch = std::make_unique<sdbusplus::bus::match_t>(
+            static_cast<sdbusplus::bus_t&>(*bus),
             "type='signal',member='InterfacesAdded',arg0path='" +
                 std::string(mctpEpsPath) + "/'",
             eventHandler);
@@ -1164,8 +1191,8 @@ int main(int argc, char* argv[])
 
         // Watch for mctp service to remove configuration interfaces
         // so the corresponding Drives can be removed.
-        auto ifaceRemovedMatch = std::make_unique<sdbusplus::bus::match::match>(
-            static_cast<sdbusplus::bus::bus&>(*bus),
+        auto ifaceRemovedMatch = std::make_unique<sdbusplus::bus::match_t>(
+            static_cast<sdbusplus::bus_t&>(*bus),
             "type='signal',member='InterfacesRemoved',arg0path='" +
                 std::string(mctpEpsPath) + "/'",
             [&filterTimer, bus, &io](sdbusplus::message::message& msg) {
@@ -1176,8 +1203,8 @@ int main(int argc, char* argv[])
 
         // Watch for MCTP Connectivity property changes on all endpoints
         // Monitor au.com.codeconstruct.MCTP.Endpoint1 interface
-        auto connectivityMatch = std::make_unique<sdbusplus::bus::match::match>(
-            static_cast<sdbusplus::bus::bus&>(*bus),
+        auto connectivityMatch = std::make_unique<sdbusplus::bus::match_t>(
+            static_cast<sdbusplus::bus_t&>(*bus),
             "type='signal',member='PropertiesChanged',path_namespace='" +
                 std::string(mctpEpsPath) +
                 "',arg0='au.com.codeconstruct.MCTP.Endpoint1'",
@@ -1209,8 +1236,8 @@ int main(int argc, char* argv[])
             }
         });
 
-        auto bootProgressMatch = std::make_unique<sdbusplus::bus::match::match>(
-            static_cast<sdbusplus::bus::bus&>(*bus),
+        auto bootProgressMatch = std::make_unique<sdbusplus::bus::match_t>(
+            static_cast<sdbusplus::bus_t&>(*bus),
             "type='signal',interface='org.freedesktop.DBus.Properties',"
             "member='PropertiesChanged',"
             "path='/xyz/openbmc_project/state/host0',"
@@ -1258,8 +1285,8 @@ int main(int argc, char* argv[])
         // Monitor host power state to clean up drives on power-off
         // NVMe drives are power-on devices and must be reinitialized after
         // power cycle
-        auto hostStateMatch = std::make_unique<sdbusplus::bus::match::match>(
-            static_cast<sdbusplus::bus::bus&>(*bus),
+        auto hostStateMatch = std::make_unique<sdbusplus::bus::match_t>(
+            static_cast<sdbusplus::bus_t&>(*bus),
             "type='signal',interface='org.freedesktop.DBus.Properties',"
             "member='PropertiesChanged',"
             "path='/xyz/openbmc_project/state/host0',"
@@ -1290,9 +1317,21 @@ int main(int argc, char* argv[])
                         auto& driveMap = getDriveMap();
                         if (!driveMap.empty())
                         {
+                            // Cancel every endpoint before closing any one of
+                            // them so all old work in the shared worker queue
+                            // can drain without issuing more transport calls.
+                            for (auto& [_, drive] : driveMap)
+                            {
+                                drive->cancelPendingOperations();
+                            }
+
                             for (auto it = driveMap.begin();
                                  it != driveMap.end();)
                             {
+                                if (auto intf = it->second->getIntf(); intf)
+                                {
+                                    intf->closeEndpoint();
+                                }
                                 deferredDestroyDrive(io, driveMap, it++);
                             }
                         }

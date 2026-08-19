@@ -3,8 +3,9 @@
  * AFFILIATES. SPDX-License-Identifier: Apache-2.0
  *
  * NVMe FW update handler: monitor nvme-update@.service via systemd JobNew,
- * parse instance (image path, version, object path prefix, drive targets), run
- * download+commit per drive, update Progress and emit FW update events.
+ * read request env files (image path, version, object path prefix, drive
+ * targets), run download+commit per drive, update Progress and emit FW update
+ * events.
  */
 
 #include <libnvme.h>
@@ -17,6 +18,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <filesystem>
 #include <fstream>
 #include <functional>
 #include <future>
@@ -29,6 +31,7 @@
 #include <system_error>
 #include <thread>
 #include <unordered_map>
+#include <variant>
 #include <vector>
 
 /** Defined in NVMeDeviceMain.cpp; used to resolve EID -> drive for FW update.
@@ -44,6 +47,11 @@ constexpr size_t fwCommitResetRestartMaxRetries = 1;
 constexpr int progressLogIntervalSec = 20;
 constexpr uint32_t nvmeStatusFieldMask = (NVME_SCT_MASK << NVME_SCT_SHIFT) |
                                          (NVME_SC_MASK << NVME_SC_SHIFT);
+constexpr const char* systemdService = "org.freedesktop.systemd1";
+constexpr const char* dbusPropertiesInterface =
+    "org.freedesktop.DBus.Properties";
+constexpr const char* systemdJobInterface = "org.freedesktop.systemd1.Job";
+constexpr const char* systemdJobTypeProperty = "JobType";
 
 struct ParsedNvmeUpdateArgs
 {
@@ -140,67 +148,118 @@ bool shouldLogEverySeconds(std::chrono::steady_clock::time_point& lastLogTime,
     return false;
 }
 
-/** Replace literal 4-char sequence backslash-x-2-0 with a single space (0x20).
- */
-void normalizeInstanceSpaces(std::string& s)
+std::string trim(const std::string& s)
 {
-    const char space = '\x20';
-    const std::string escaped("\\x20"); // backslash, 'x', '2', '0'
-    for (std::string::size_type pos = 0;
-         (pos = s.find(escaped, pos)) != std::string::npos;)
+    const char* whitespace = " \t\r\n";
+    const auto first = s.find_first_not_of(whitespace);
+    if (first == std::string::npos)
     {
-        s.replace(pos, escaped.size(), 1, space);
-        pos += 1;
+        return "";
     }
+    const auto last = s.find_last_not_of(whitespace);
+    return s.substr(first, last - first + 1);
 }
 
-/** Parse instance string from nvme-update@<instance>.service.
- *  Args from code-manager: " <path_with_dashes> <version> <prefix_with_dashes>
- * <driveName1> [driveName2] ...". Replace '-' with '/' for path and prefix to
- * recover actual paths.
- */
-std::optional<ParsedNvmeUpdateArgs>
-    parseNvmeUpdateInstance(std::string instance)
+std::string unquoteEnvValue(std::string value)
 {
-    normalizeInstanceSpaces(instance);
-    std::istringstream iss(instance);
-    std::vector<std::string> tokens;
-    std::string t;
-    while (iss >> t)
+    value = trim(value);
+    if (value.size() < 2 || value.front() != '"' || value.back() != '"')
     {
-        tokens.push_back(std::move(t));
+        return value;
     }
-    // Need at least: path, version, prefix, one target (code-manager may add
-    // leading space -> empty token)
-    if (tokens.size() < 4)
+
+    std::string out;
+    bool escaped = false;
+    for (size_t i = 1; i + 1 < value.size(); ++i)
     {
-        return std::nullopt;
-    }
-    ParsedNvmeUpdateArgs out;
-    auto dashToSlash = [](std::string s) {
-        std::replace(s.begin(), s.end(), '-', '/');
-        return s;
-    };
-    size_t iPath = 0;
-    while (iPath < tokens.size() && tokens[iPath].empty())
-    {
-        ++iPath;
-    }
-    if (iPath + 3 > tokens.size())
-    {
-        return std::nullopt;
-    }
-    out.imagePath = dashToSlash(tokens[iPath]);
-    out.version = tokens[iPath + 1];
-    out.objectPathPrefix = dashToSlash(tokens[iPath + 2]);
-    for (size_t i = iPath + 3; i < tokens.size(); ++i)
-    {
-        if (!tokens[i].empty())
+        const char c = value[i];
+        if (escaped)
         {
-            out.targets.push_back(tokens[i]);
+            out += c;
+            escaped = false;
+        }
+        else if (c == '\\')
+        {
+            escaped = true;
+        }
+        else
+        {
+            out += c;
         }
     }
-    if (out.targets.empty())
+    if (escaped)
+    {
+        out += '\\';
+    }
+    return out;
+}
+
+std::vector<std::string> splitTargets(const std::string& targetList)
+{
+    std::istringstream iss(targetList);
+    std::vector<std::string> targets;
+    std::string target;
+    while (iss >> target)
+    {
+        targets.push_back(std::move(target));
+    }
+    return targets;
+}
+
+std::filesystem::path requestFilePath(const std::string& requestId)
+{
+    return std::filesystem::path(nvmeUpdateRequestDir) / (requestId + ".env");
+}
+
+std::optional<ParsedNvmeUpdateArgs>
+    parseNvmeUpdateRequest(const std::string& requestId)
+{
+    std::ifstream envFile(requestFilePath(requestId));
+    if (!envFile)
+    {
+        lg2::warning("Failed to open nvme-update request file for {REQUEST}",
+                     "REQUEST", requestId);
+        return std::nullopt;
+    }
+
+    std::unordered_map<std::string, std::string> env;
+    std::string line;
+    while (std::getline(envFile, line))
+    {
+        line = trim(line);
+        if (line.empty() || line.front() == '#')
+        {
+            continue;
+        }
+        const auto eq = line.find('=');
+        if (eq == std::string::npos)
+        {
+            continue;
+        }
+        env.emplace(trim(line.substr(0, eq)),
+                    unquoteEnvValue(line.substr(eq + 1)));
+    }
+
+    ParsedNvmeUpdateArgs out;
+    if (auto it = env.find("FW_IMAGE"); it != env.end())
+    {
+        out.imagePath = it->second;
+    }
+    if (auto it = env.find("FW_VERSION"); it != env.end())
+    {
+        out.version = it->second;
+    }
+    if (auto it = env.find("FW_PREFIX"); it != env.end())
+    {
+        out.objectPathPrefix = it->second;
+    }
+    if (auto it = env.find("FW_TARGETS"); it != env.end())
+    {
+        out.targets = splitTargets(it->second);
+    }
+
+    if (out.imagePath.empty() || out.version.empty() ||
+        out.objectPathPrefix.empty() || out.targets.empty())
     {
         return std::nullopt;
     }
@@ -484,15 +543,6 @@ void runFwUpdate(const std::shared_ptr<sdbusplus::asio::connection>& conn,
         setProgress(100, OperationStatus::Completed);
         return;
     }
-
-    auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-                  std::chrono::steady_clock::now() - updateStartTime)
-                  .count();
-    lg2::error(
-        "FW update EID {EID} failed after {MS} ms: restart attempts exhausted",
-        "EID", static_cast<int>(eid), "MS", ms);
-    logActivateFailed(conn, deviceInfo, args.version, objPath);
-    setProgress(0, OperationStatus::Failed);
 }
 
 /** Deduplicate JobNew: avoid running the same nvme-update@instance twice
@@ -520,48 +570,32 @@ bool shouldSkipDuplicateJob(const std::string& unitId)
     return false;
 }
 
-void onNvmeUpdateJobNew(
+void handleNvmeUpdateStartJob(
     const std::shared_ptr<sdbusplus::asio::connection>& conn,
-    sdbusplus::message::message& msg)
+    const std::string& unitId)
 {
-    uint32_t jobId = 0;
-    sdbusplus::message::object_path jobPath;
-    std::string unitId;
-    try
-    {
-        msg.read(jobId, jobPath, unitId);
-    }
-    catch (const std::exception& e)
-    {
-        lg2::error("JobNew read failed: {ERR}", "ERR", e.what());
-        return;
-    }
     const std::string prefix(nvmeUpdateServicePrefix);
     const std::string suffix(".service");
-    if (unitId.size() < prefix.size() + suffix.size() ||
-        !unitId.starts_with(prefix) || !unitId.ends_with(suffix))
-    {
-        return;
-    }
+
     if (shouldSkipDuplicateJob(unitId))
     {
         return;
     }
-    std::string instance = unitId.substr(
+    std::string requestId = unitId.substr(
         prefix.size(), unitId.size() - prefix.size() - suffix.size());
-    auto args = parseNvmeUpdateInstance(instance);
+    auto args = parseNvmeUpdateRequest(requestId);
     if (!args)
     {
-        lg2::warning("Failed to parse nvme-update instance: {INST}", "INST",
-                     instance);
+        lg2::warning("Failed to parse nvme-update request: {REQUEST}",
+                     "REQUEST", requestId);
         logNoMatchingDevices(conn);
         return;
     }
     if (args->targets.empty())
     {
         lg2::warning(
-            "No matching devices found for nvme-update instance: {INST}",
-            "INST", instance);
+            "No matching devices found for nvme-update request: {REQUEST}",
+            "REQUEST", requestId);
         logNoMatchingDevices(conn);
         return;
     }
@@ -586,14 +620,72 @@ void onNvmeUpdateJobNew(
     }
 }
 
+void onNvmeUpdateJobNew(
+    const std::shared_ptr<sdbusplus::asio::connection>& conn,
+    sdbusplus::message::message& msg)
+{
+    uint32_t jobId = 0;
+    sdbusplus::message::object_path jobPath;
+    std::string unitId;
+    try
+    {
+        msg.read(jobId, jobPath, unitId);
+    }
+    catch (const std::exception& e)
+    {
+        lg2::error("JobNew read failed: {ERR}", "ERR", e.what());
+        return;
+    }
+    const std::string prefix(nvmeUpdateServicePrefix);
+    const std::string suffix(".service");
+    if (unitId.size() < prefix.size() + suffix.size() ||
+        !unitId.starts_with(prefix) || !unitId.ends_with(suffix))
+    {
+        return;
+    }
+
+    const std::string jobPathStr = jobPath.str;
+    conn->async_method_call(
+        [conn, jobId, jobPathStr,
+         unitId](boost::system::error_code ec,
+                 std::variant<std::string> jobTypeVar) {
+        if (ec)
+        {
+            lg2::warning(
+                "Failed to read systemd JobType for nvme-update JobNew: job {JOB} path {PATH} unit {UNIT}: {ERROR}",
+                "JOB", jobId, "PATH", jobPathStr, "UNIT", unitId, "ERROR",
+                ec.message());
+            return;
+        }
+
+        const std::string* jobType = std::get_if<std::string>(&jobTypeVar);
+        if (jobType == nullptr)
+        {
+            lg2::warning(
+                "Unexpected systemd JobType variant for nvme-update JobNew: job {JOB} path {PATH} unit {UNIT}",
+                "JOB", jobId, "PATH", jobPathStr, "UNIT", unitId);
+            return;
+        }
+
+        if (*jobType != "start")
+        {
+            return;
+        }
+
+        handleNvmeUpdateStartJob(conn, unitId);
+    },
+        systemdService, jobPathStr, dbusPropertiesInterface, "Get",
+        systemdJobInterface, systemdJobTypeProperty);
+}
+
 } // anonymous namespace
 
 void startNvmeFwUpdateMonitor(
     const std::shared_ptr<sdbusplus::asio::connection>& conn)
 {
-    static std::unique_ptr<sdbusplus::bus::match::match> match;
-    match = std::make_unique<sdbusplus::bus::match::match>(
-        static_cast<sdbusplus::bus::bus&>(*conn),
+    static std::unique_ptr<sdbusplus::bus::match_t> match;
+    match = std::make_unique<sdbusplus::bus::match_t>(
+        static_cast<sdbusplus::bus_t&>(*conn),
         "type='signal',sender='org.freedesktop.systemd1',"
         "path='/org/freedesktop/systemd1',"
         "interface='org.freedesktop.systemd1.Manager',member='JobNew'",

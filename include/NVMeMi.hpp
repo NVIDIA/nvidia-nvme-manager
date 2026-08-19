@@ -4,6 +4,7 @@
 #include <sdbusplus/asio/object_server.hpp>
 #include <sdbusplus/bus.hpp>
 
+#include <atomic>
 #include <memory>
 #include <mutex>
 #include <thread>
@@ -17,6 +18,8 @@ class NVMeMi : public NVMeMiIntf, public std::enable_shared_from_this<NVMeMi>
     ~NVMeMi() override;
 
     static void initLogging();
+    void cancelPendingCommands() override;
+    void closeEndpoint() override;
 
     // Delete copy operations
     NVMeMi(const NVMeMi&) = delete;
@@ -101,6 +104,7 @@ class NVMeMi : public NVMeMiIntf, public std::enable_shared_from_this<NVMeMi>
 
     // Per-EID mutex: serializes NVMe commands for this endpoint
     std::shared_ptr<std::mutex> endpointMux;
+    std::atomic_bool commandsCancelled{false};
 
     // A worker thread for calling NVMeMI cmd.
     class Worker

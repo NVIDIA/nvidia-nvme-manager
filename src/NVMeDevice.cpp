@@ -30,7 +30,7 @@ NVMeDevice::NVMeDevice(boost::asio::io_context& io,
                        const std::string& path, const std::string& formFactor,
                        const std::string& driveAssoc,
                        const std::string& locCode) :
-    NvmeInterfaces(static_cast<sdbusplus::bus::bus&>(*conn), path.c_str(),
+    NvmeInterfaces(static_cast<sdbusplus::bus_t&>(*conn), path.c_str(),
                    NvmeInterfaces::action::defer_emit),
     driveAssociation(driveAssoc), conn(conn), objServer(objectServer),
     scanTimer(io), initRetryTimer(io), objPath(path), eid(eid), bus(bus),
@@ -941,8 +941,7 @@ void NVMeDevice::checkAndGenerateDriveEvent()
         bool found = false;
         for (const auto& drive : driveStates)
         {
-            if (!currentLoc.empty() && drive.contains("locationCode") &&
-                drive["locationCode"] == currentLoc)
+            if (drive.contains("eid") && drive["eid"] == eid)
             {
                 found = true;
                 std::string connectivity = drive.contains("connectivity")
