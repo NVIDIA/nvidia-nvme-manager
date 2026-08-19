@@ -11,6 +11,10 @@ conf_data.set_quoted(
 )
 conf_data.set_quoted('DRIVE_STATE_FILE', get_option('drive_state_file'))
 conf_data.set('BOOT_PROGRESS_TIMEOUT', get_option('boot_progress_timeout'))
+conf_data.set(
+    'FW_UPDATE_PROGRESS_TIMEOUT',
+    get_option('fw_update_progress_timeout'),
+)
 conf_data.set_quoted(
     'NVME_UPDATE_SERVICE_PREFIX',
     get_option('nvme_update_service_prefix'),

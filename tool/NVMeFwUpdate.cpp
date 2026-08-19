@@ -8,6 +8,8 @@
  * on each drive target path, and exits 0 if all complete successfully else 1.
  */
 
+#include <nvme-mi_config.h>
+
 #include <boost/asio/io_context.hpp>
 #include <boost/asio/steady_timer.hpp>
 #include <phosphor-logging/lg2.hpp>
@@ -25,7 +27,7 @@
 
 PHOSPHOR_LOG2_USING;
 
-constexpr std::chrono::minutes progressTimeout{10};
+constexpr std::chrono::seconds progressTimeout{fwUpdateProgressTimeout};
 constexpr std::chrono::seconds progressChangeTimeout{30};
 constexpr const char* progressInterface = "xyz.openbmc_project.Common.Progress";
 constexpr const char* progressStatusProp = "Status";
@@ -248,6 +250,8 @@ int main(int argc, char* argv[])
             checkDone();
         });
 
+        lg2::debug("NVMe firmware update progress timeout: {TIMEOUT} seconds",
+                   "TIMEOUT", progressTimeout.count());
         timeoutTimer.expires_after(progressTimeout);
         timeoutTimer.async_wait([&](boost::system::error_code ec) {
             if (ec == boost::asio::error::operation_aborted)
