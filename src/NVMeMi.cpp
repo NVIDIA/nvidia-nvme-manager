@@ -19,7 +19,7 @@
 #include <vector>
 
 constexpr size_t maxNVMeMILength = 4096;
-constexpr unsigned int nvmeMiResponseTimeoutMs = 1000;
+constexpr unsigned int nvmeMiResponseTimeoutMs = 2000;
 
 std::map<int, std::shared_ptr<NVMeMi::Worker>>& NVMeMi::getWorkerMap()
 {
