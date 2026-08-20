@@ -20,6 +20,9 @@
 
 constexpr size_t maxNVMeMILength = 4096;
 constexpr unsigned int nvmeMiResponseTimeoutMs = 2000;
+#ifdef HAVE_NVME_MI_MI_XFER
+constexpr uint8_t nvmeMiVpdReadOpcode = 0x05;
+#endif
 
 std::map<int, std::shared_ptr<NVMeMi::Worker>>& NVMeMi::getWorkerMap()
 {
@@ -466,6 +469,92 @@ void NVMeMi::miScanCtrl(std::function<void(const std::error_code&,
         });
         return;
     }
+}
+
+void NVMeMi::miVpdRead(
+    uint16_t offset, uint16_t length,
+    std::function<void(const std::error_code&, std::span<uint8_t>)>&& cb)
+{
+#ifndef HAVE_NVME_MI_MI_XFER
+    (void)offset;
+    (void)length;
+    boost::asio::post(io, [cb{std::move(cb)}]() {
+        cb(std::make_error_code(std::errc::operation_not_supported), {});
+    });
+#else
+    if (nvmeEP == nullptr)
+    {
+        lg2::error("[addr:{ADDR}, eid:{EID}] nvme endpoint is invalid", "ADDR",
+                   addr, "EID", static_cast<int>(eid));
+        boost::asio::post(io, [cb{std::move(cb)}]() {
+            cb(std::make_error_code(std::errc::no_such_device), {});
+        });
+        return;
+    }
+
+    try
+    {
+        post([self{shared_from_this()}, offset, length, cb{std::move(cb)}]() {
+            nvme_mi_mi_req_hdr request{};
+            request.opcode = nvmeMiVpdReadOpcode;
+            request.cdw0 =
+                boost::endian::native_to_little(static_cast<uint32_t>(offset));
+            request.cdw1 =
+                boost::endian::native_to_little(static_cast<uint32_t>(length));
+
+            std::vector<uint32_t> response(
+                (sizeof(nvme_mi_mi_resp_hdr) + length + sizeof(uint32_t) - 1) /
+                sizeof(uint32_t));
+            auto* responseHeader =
+                reinterpret_cast<nvme_mi_mi_resp_hdr*>(response.data());
+            size_t responseLength = length;
+            int rc = nvme_mi_mi_xfer(self->nvmeEP, &request, 0, responseHeader,
+                                     &responseLength);
+            if (rc < 0)
+            {
+                const int savedErrno = errno;
+                lg2::error("[addr:{ADDR}, eid:{EID}] VPD Read failed: {ERR}",
+                           "ADDR", self->addr, "EID",
+                           static_cast<int>(self->eid), "ERR",
+                           std::strerror(savedErrno));
+                boost::asio::post(self->io, [cb{cb}, lastErrno{savedErrno}]() {
+                    cb(std::make_error_code(static_cast<std::errc>(lastErrno)),
+                       {});
+                });
+                return;
+            }
+            if (rc > 0)
+            {
+                std::string_view errMsg =
+                    statusToString(static_cast<nvme_mi_resp_status>(rc));
+                lg2::error("[addr:{ADDR}, eid:{EID}] VPD Read failed: {ERR}",
+                           "ADDR", self->addr, "EID",
+                           static_cast<int>(self->eid), "ERR", errMsg);
+                boost::asio::post(self->io, [cb{cb}]() {
+                    cb(std::make_error_code(std::errc::bad_message), {});
+                });
+                return;
+            }
+
+            boost::asio::post(self->io, [cb{cb}, response{std::move(response)},
+                                         responseLength]() mutable {
+                std::span<uint8_t> data(
+                    reinterpret_cast<uint8_t*>(response.data()) +
+                        sizeof(nvme_mi_mi_resp_hdr),
+                    responseLength);
+                cb({}, data);
+            });
+        });
+    }
+    catch (const std::runtime_error& e)
+    {
+        lg2::error("[addr:{ADDR}, eid:{EID}] {MSG}", "ADDR", addr, "EID",
+                   static_cast<int>(eid), "MSG", e.what());
+        boost::asio::post(io, [cb{std::move(cb)}]() {
+            cb(std::make_error_code(std::errc::no_such_device), {});
+        });
+    }
+#endif
 }
 
 void NVMeMi::adminIdentify(
