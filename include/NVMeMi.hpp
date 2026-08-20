@@ -38,6 +38,9 @@ class NVMeMi : public NVMeMiIntf, public std::enable_shared_from_this<NVMeMi>
     void miScanCtrl(std::function<void(const std::error_code&,
                                        const std::vector<nvme_mi_ctrl_t>&)>
                         cb) override;
+    void miVpdRead(uint16_t offset, uint16_t length,
+                   std::function<void(const std::error_code&,
+                                      std::span<uint8_t>)>&& cb) override;
     void adminIdentify(uint8_t eid, nvme_identify_cns cns, uint32_t nsid,
                        uint16_t cntid, uint16_t readLength,
                        std::function<void(const std::error_code&,

@@ -10,12 +10,20 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <optional>
 #include <span>
 
 const std::string driveConfig{"/usr/share/nvidia-nvme-manager/drive.json"};
 
 const std::uint8_t maxIdentifyCmdRetry = 3;
 const std::uint8_t pollInterval = 5;
+const std::size_t vpdHeaderLength = 8;
+const std::size_t fruProductInfoHeaderLength = 3;
+const std::size_t maxVpdReadLength = 4096;
+const uint8_t fruEndOfFields = 0xc1;
+const uint8_t fruProductInfoVersion = 0x01;
+const uint8_t fruProductNameField = 1;
+const uint8_t fruTypeLengthMask = 0x3f;
 using Level = sdbusplus::xyz::openbmc_project::Logging::server::Entry::Level;
 
 using Json = nlohmann::json;
@@ -135,6 +143,56 @@ std::string NVMeDevice::stripString(std::span<const char> src)
     return s;
 }
 
+std::optional<std::string>
+    NVMeDevice::parseIpmiProductName(std::span<const uint8_t> productInfo)
+{
+    if (productInfo.size() < fruProductInfoHeaderLength + 1 ||
+        productInfo[0] != fruProductInfoVersion ||
+        static_cast<std::size_t>(productInfo[1]) * vpdHeaderLength !=
+            productInfo.size())
+    {
+        return std::nullopt;
+    }
+
+    std::size_t fieldOffset = fruProductInfoHeaderLength;
+    for (uint8_t field = 0; field <= fruProductNameField; ++field)
+    {
+        if (fieldOffset >= productInfo.size() - 1)
+        {
+            return std::nullopt;
+        }
+
+        uint8_t fieldTypeLength = productInfo[fieldOffset++];
+        if (fieldTypeLength == fruEndOfFields)
+        {
+            return std::nullopt;
+        }
+
+        std::size_t fieldLength = fieldTypeLength & fruTypeLengthMask;
+        if (fieldOffset + fieldLength > productInfo.size() - 1)
+        {
+            return std::nullopt;
+        }
+
+        if (field == fruProductNameField)
+        {
+            std::string productName;
+            for (uint8_t character :
+                 productInfo.subspan(fieldOffset, fieldLength))
+            {
+                if (character == '\0')
+                {
+                    break;
+                }
+                productName += static_cast<char>(character);
+            }
+            return stripString(productName);
+        }
+        fieldOffset += fieldLength;
+    }
+    return std::nullopt;
+}
+
 std::string NVMeDevice::getManufacture(uint16_t vid)
 {
     if (vid == 0x144d)
@@ -236,7 +294,10 @@ void NVMeDevice::getDriveInfo()
         auto sn = NVMeDevice::stripString(std::span<const char, 20>(id->sn));
         self->Asset::serialNumber(sn, true);
         auto mn = NVMeDevice::stripString(std::span<const char, 40>(id->mn));
-        self->Asset::model(mn, true);
+        self->Asset::partNumber(mn, true);
+#ifdef HAVE_NVME_MI_MI_XFER
+        self->getDriveVpd();
+#endif
 
         std::string fr;
         fr.assign(static_cast<const char*>(id->fr), 8);
@@ -272,6 +333,88 @@ void NVMeDevice::getDriveInfo()
         self->checkAndGenerateDriveEvent();
 
         self->pollDrive();
+    });
+}
+
+void NVMeDevice::getDriveVpd()
+{
+    intf->miVpdRead(0, vpdHeaderLength,
+                    [weak{weak_from_this()}](const std::error_code& ec,
+                                             std::span<uint8_t> header) {
+        auto self = weak.lock();
+        if (!self || ec || header.size() != vpdHeaderLength)
+        {
+            if (ec)
+            {
+                lg2::warning("eid:{EID} - failed to read VPD header: {MSG}",
+                             "EID", self ? self->eid : 0, "MSG", ec.message());
+            }
+            return;
+        }
+
+        std::size_t productInfoOffset = static_cast<std::size_t>(header[4]) *
+                                        vpdHeaderLength;
+        if (productInfoOffset == 0)
+        {
+            return;
+        }
+
+        self->intf->miVpdRead(
+            static_cast<uint16_t>(productInfoOffset), 4,
+            [weak, productInfoOffset](const std::error_code& areaEc,
+                                      std::span<uint8_t> areaHeader) {
+            auto self = weak.lock();
+            if (!self || areaEc || areaHeader.size() < 2)
+            {
+                if (areaEc)
+                {
+                    lg2::warning(
+                        "eid:{EID} - failed to read FRU Product Info header: {MSG}",
+                        "EID", self ? self->eid : 0, "MSG", areaEc.message());
+                }
+                return;
+            }
+
+            std::size_t productInfoLength =
+                static_cast<std::size_t>(areaHeader[1]) * vpdHeaderLength;
+            if (productInfoLength < fruProductInfoHeaderLength ||
+                productInfoLength > maxVpdReadLength)
+            {
+                lg2::warning("eid:{EID} - invalid FRU Product Info length",
+                             "EID", self->eid);
+                return;
+            }
+
+            self->intf->miVpdRead(
+                static_cast<uint16_t>(productInfoOffset),
+                static_cast<uint16_t>(productInfoLength),
+                [weak, productInfoLength](const std::error_code& productEc,
+                                          std::span<uint8_t> productInfo) {
+                auto self = weak.lock();
+                if (!self || productEc ||
+                    productInfo.size() != productInfoLength)
+                {
+                    if (productEc)
+                    {
+                        lg2::warning(
+                            "eid:{EID} - failed to read FRU Product Info: {MSG}",
+                            "EID", self ? self->eid : 0, "MSG",
+                            productEc.message());
+                    }
+                    return;
+                }
+
+                auto productName =
+                    NVMeDevice::parseIpmiProductName(productInfo);
+                if (productName && !productName->empty())
+                {
+                    self->Asset::model(*productName, true);
+#ifdef FIRMWARE_INVENTORY
+                    self->updateSoftwareInventory();
+#endif
+                }
+            });
+        });
     });
 }
 
