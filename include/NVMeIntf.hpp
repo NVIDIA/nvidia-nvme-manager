@@ -186,6 +186,9 @@ class NVMeMiIntf
         miScanCtrl(std::function<void(const std::error_code&,
                                       const std::vector<nvme_mi_ctrl_t>&)>
                        cb) = 0;
+    virtual void miVpdRead(uint16_t offset, uint16_t length,
+                           std::function<void(const std::error_code&,
+                                              std::span<uint8_t>)>&& cb) = 0;
 
     virtual ~NVMeMiIntf() = default;
 
