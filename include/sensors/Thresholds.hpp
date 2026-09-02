@@ -53,6 +53,10 @@ struct Threshold
     double value;
     double hysteresis;
     bool writeable;
+    // Threshold violations must be observed repeatedly before asserting an
+    // alarm.  These fields are runtime state and are reset on recovery.
+    size_t hitCount{0};
+    bool asserted{false};
 };
 
 void assertThresholds(NVMeMiSensor* sensor, double assertValue,
