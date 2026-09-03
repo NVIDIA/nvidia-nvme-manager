@@ -15,6 +15,10 @@ conf_data.set(
     'FW_UPDATE_PROGRESS_TIMEOUT',
     get_option('fw_update_progress_timeout'),
 )
+conf_data.set(
+    'DRIVE_TEMP_THRESHOLD_CONFIRMATION_COUNT',
+    get_option('drive_temp_threshold_confirmation_count'),
+)
 conf_data.set_quoted(
     'NVME_UPDATE_SERVICE_PREFIX',
     get_option('nvme_update_service_prefix'),

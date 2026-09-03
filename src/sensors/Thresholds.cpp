@@ -8,11 +8,14 @@
 #include "SensorUtil.hpp"
 #include "VariantVisitors.hpp"
 
+#include <nvme-mi_config.h>
+
 #include <phosphor-logging/lg2.hpp>
 #include <sdbusplus/exception.hpp>
 
 using nvme::sensors::SensorData;
 
+#include <cmath>
 #include <limits>
 #include <string>
 #include <vector>
@@ -122,10 +125,13 @@ bool parseThresholdsFromConfig(
 
 struct ChangeParam
 {
-    ChangeParam(Threshold whichThreshold, bool status, double value) :
-        threshold(whichThreshold), asserted(status), assertValue(value)
+    ChangeParam(Level thresholdLevel, Direction thresholdDirection, bool status,
+                double value) :
+        level(thresholdLevel), direction(thresholdDirection), asserted(status),
+        assertValue(value)
     {}
-    Threshold threshold;
+    Level level;
+    Direction direction;
     bool asserted;
     double assertValue;
 };
@@ -141,26 +147,72 @@ static std::vector<ChangeParam> checkThresholds(NVMeMiSensor* sensor,
 
     for (auto& threshold : sensor->thresholds)
     {
+        bool thresholdHit = false;
+        bool thresholdRecovered = false;
+        const bool hasHysteresis = !std::isnan(threshold.hysteresis);
         if (threshold.direction == thresholds::Direction::HIGH)
         {
             if (value >= threshold.value)
             {
-                thresholdChanges.emplace_back(threshold, true, value);
+                thresholdHit = true;
             }
-            else if (value < (threshold.value - threshold.hysteresis))
+            else if (hasHysteresis
+                         ? (value < (threshold.value - threshold.hysteresis))
+                         : (value < threshold.value))
             {
-                thresholdChanges.emplace_back(threshold, false, value);
+                thresholdRecovered = true;
             }
         }
         else if (threshold.direction == thresholds::Direction::LOW)
         {
             if (value <= threshold.value)
             {
-                thresholdChanges.emplace_back(threshold, true, value);
+                thresholdHit = true;
             }
-            else if (value > (threshold.value + threshold.hysteresis))
+            else if (hasHysteresis
+                         ? (value > (threshold.value + threshold.hysteresis))
+                         : (value > threshold.value))
             {
-                thresholdChanges.emplace_back(threshold, false, value);
+                thresholdRecovered = true;
+            }
+        }
+
+        if (thresholdHit)
+        {
+            if (threshold.hitCount < driveTempThresholdConfirmationCount)
+            {
+                ++threshold.hitCount;
+            }
+            lg2::warning(
+                "Drive temperature sensor {NAME} reading {VALUE} is outside "
+                "the {DIRECTION} threshold {THRESHOLD}; confirmation "
+                "{COUNT}/{REQUIRED}; hysteresis {HYSTERESIS}",
+                "NAME", sensor->getName(), "VALUE", value, "DIRECTION",
+                threshold.direction == Direction::HIGH ? "high" : "low",
+                "THRESHOLD", threshold.value, "COUNT", threshold.hitCount,
+                "REQUIRED", driveTempThresholdConfirmationCount, "HYSTERESIS",
+                threshold.hysteresis);
+            if (!threshold.asserted &&
+                threshold.hitCount == driveTempThresholdConfirmationCount)
+            {
+                threshold.asserted = true;
+                thresholdChanges.emplace_back(threshold.level,
+                                              threshold.direction, true, value);
+            }
+        }
+        else if (!threshold.asserted)
+        {
+            // Confirmation requires consecutive out-of-range samples.
+            threshold.hitCount = 0;
+        }
+        else if (thresholdRecovered)
+        {
+            threshold.hitCount = 0;
+            if (threshold.asserted)
+            {
+                threshold.asserted = false;
+                thresholdChanges.emplace_back(
+                    threshold.level, threshold.direction, false, value);
             }
         }
     }
@@ -174,12 +226,16 @@ bool checkThresholds(NVMeMiSensor* sensor)
     std::vector<ChangeParam> changes = checkThresholds(sensor, value);
     for (const auto& change : changes)
     {
-        assertThresholds(sensor, change.assertValue, change.threshold.level,
-                         change.threshold.direction, change.asserted);
-        if (change.threshold.level == thresholds::Level::CRITICAL &&
-            change.asserted)
+        assertThresholds(sensor, change.assertValue, change.level,
+                         change.direction, change.asserted);
+    }
+    for (const auto& threshold : sensor->thresholds)
+    {
+        if (threshold.level == thresholds::Level::CRITICAL &&
+            threshold.asserted)
         {
             status = false;
+            break;
         }
     }
     return status;

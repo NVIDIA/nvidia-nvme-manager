@@ -41,6 +41,13 @@ option(
     description: 'enable NVMe-MI temperature and status sensors',
 )
 option(
+    'drive_temp_threshold_confirmation_count',
+    type: 'integer',
+    value: 3,
+    min: 1,
+    description: 'Number of consecutive out-of-range drive temperature readings required to assert a threshold event',
+)
+option(
     'drive_state_file',
     type: 'string',
     value: '/var/lib/nvidia-nvme-manager/nvme_drive_state.json',
