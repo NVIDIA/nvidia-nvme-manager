@@ -211,6 +211,10 @@ std::string NVMeDevice::getManufacture(uint16_t vid)
     {
         return {"Solidigm"};
     }
+    if (vid == 0x1c5c)
+    {
+        return {"SK hynix"};
+    }
 
     return {"Unkown"};
 }
