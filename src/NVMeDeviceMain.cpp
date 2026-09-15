@@ -19,6 +19,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <iostream>
 #include <optional>
 #include <regex>
@@ -71,6 +72,10 @@ bool& getColdRemovalCheckComplete()
 
 // Forward declarations
 static bool isHostOff(const std::shared_ptr<sdbusplus::asio::connection>& conn);
+using HostRunningCallback = std::function<void(bool, bool)>;
+static void
+    isHostRunning(const std::shared_ptr<sdbusplus::asio::connection>& conn,
+                  HostRunningCallback callback);
 static void markDriveAsRemoved(uint8_t eid);
 static std::optional<eid_t> parseEidFromObjectPath(const std::string& path);
 static void checkForColdRemovedDrives(
@@ -731,6 +736,73 @@ static bool isHostOff(const std::shared_ptr<sdbusplus::asio::connection>& conn)
     }
 }
 
+/**
+ * @brief Check if the host is confirmed to be running
+ *
+ * Cold-removal detection must only run after host power is restored.  Treat
+ * every other state, including a D-Bus lookup failure, as not running so a BMC
+ * restart while the host is off cannot turn unavailable drives into removal
+ * events.
+ */
+static void
+    isHostRunning(const std::shared_ptr<sdbusplus::asio::connection>& conn,
+                  HostRunningCallback callback)
+{
+    conn->async_method_call(
+        [callback = std::move(callback)](
+            const boost::system::error_code& ec,
+            std::variant<std::string> hostState) mutable {
+        if (ec)
+        {
+            lg2::warning(
+                "Unable to confirm host is running: {ERR}; deferring cold-removal check",
+                "ERR", ec.message());
+            callback(false, true);
+            return;
+        }
+
+        const std::string& state = std::get<std::string>(hostState);
+        callback(state.find("HostState.Running") != std::string::npos, false);
+    },
+        "xyz.openbmc_project.State.Host", "/xyz/openbmc_project/state/host0",
+        "org.freedesktop.DBus.Properties", "Get",
+        "xyz.openbmc_project.State.Host", "CurrentHostState");
+}
+
+static void scheduleHostStateRetry(
+    const std::shared_ptr<sdbusplus::asio::connection>& bus,
+    const std::shared_ptr<boost::asio::steady_timer>& retryTimer,
+    const std::function<void()>& armBootProgressTimer)
+{
+    retryTimer->expires_after(std::chrono::seconds(5));
+    retryTimer->async_wait([bus, retryTimer, armBootProgressTimer](
+                               const boost::system::error_code& ec) {
+        if (ec == boost::asio::error::operation_aborted)
+        {
+            return;
+        }
+
+        if (ec)
+        {
+            lg2::error("Host state retry timer failed: {ERR}", "ERR",
+                       ec.message());
+            return;
+        }
+
+        isHostRunning(bus, [bus, retryTimer, armBootProgressTimer](
+                               bool running, bool stateReadFailed) {
+            if (running)
+            {
+                armBootProgressTimer();
+            }
+            else if (stateReadFailed)
+            {
+                scheduleHostStateRetry(bus, retryTimer, armBootProgressTimer);
+            }
+        });
+    });
+}
+
 static void connectivityChanged(
     sdbusplus::message_t& message,
     const std::shared_ptr<sdbusplus::asio::connection>& /* conn */,
@@ -1216,21 +1288,49 @@ int main(int argc, char* argv[])
         // Wait for OSRunning state or configured timeout
         auto bootProgressTimer =
             std::make_shared<boost::asio::steady_timer>(io);
-        bootProgressTimer->expires_after(
-            std::chrono::seconds(bootProgressTimeout));
-        bootProgressTimer->async_wait(
-            [bus, bootProgressTimer](const boost::system::error_code& ec) {
-            if (ec == boost::asio::error::operation_aborted)
-            {
-                return; // Timer was cancelled (boot reached OSRunning)
-            }
+        auto hostStateRetryTimer =
+            std::make_shared<boost::asio::steady_timer>(io);
+        auto armBootProgressTimer = [bus, bootProgressTimer]() {
+            bootProgressTimer->expires_after(
+                std::chrono::seconds(bootProgressTimeout));
+            bootProgressTimer->async_wait(
+                [bus, bootProgressTimer](const boost::system::error_code& ec) {
+                if (ec == boost::asio::error::operation_aborted)
+                {
+                    return;
+                }
 
-            if (!getColdRemovalCheckComplete())
+                if (ec)
+                {
+                    lg2::error("Boot progress timer failed: {ERR}", "ERR",
+                               ec.message());
+                    return;
+                }
+
+                if (!getColdRemovalCheckComplete())
+                {
+                    lg2::info(
+                        "Boot progress timeout ({TIMEOUT} seconds), checking for cold-removed drives",
+                        "TIMEOUT", bootProgressTimeout);
+                    checkForColdRemovedDrives(bus);
+                }
+            });
+        };
+        isHostRunning(bus, [bus, hostStateRetryTimer, armBootProgressTimer](
+                               bool running, bool stateReadFailed) {
+            if (running)
+            {
+                armBootProgressTimer();
+            }
+            else if (stateReadFailed)
+            {
+                scheduleHostStateRetry(bus, hostStateRetryTimer,
+                                       armBootProgressTimer);
+            }
+            else
             {
                 lg2::info(
-                    "Boot progress timeout ({TIMEOUT} seconds), checking for cold-removed drives",
-                    "TIMEOUT", bootProgressTimeout);
-                checkForColdRemovedDrives(bus);
+                    "Host is not running at NVMe manager startup; boot progress timer will be armed on host power-on");
             }
         });
 
@@ -1289,8 +1389,8 @@ int main(int argc, char* argv[])
             "member='PropertiesChanged',"
             "path='/xyz/openbmc_project/state/host0',"
             "arg0='xyz.openbmc_project.State.Host'",
-            [bootProgressTimer, &io, &objectServer,
-             &bus](sdbusplus::message_t& msg) {
+            [bootProgressTimer, hostStateRetryTimer, armBootProgressTimer, &io,
+             &objectServer, &bus](sdbusplus::message_t& msg) {
             std::string interfaceName;
             std::map<std::string, std::variant<std::string>> changedProperties;
 
@@ -1311,6 +1411,7 @@ int main(int argc, char* argv[])
                     if (hostState.find("Off") != std::string::npos)
                     {
                         lg2::info("Host powered off, cleaning up NVMe drives");
+                        hostStateRetryTimer->cancel();
 
                         auto& driveMap = getDriveMap();
                         if (!driveMap.empty())
@@ -1350,6 +1451,8 @@ int main(int argc, char* argv[])
                              std::string::npos)
                     {
                         lg2::info("Host running, re-scanning for NVMe drives");
+                        hostStateRetryTimer->cancel();
+                        armBootProgressTimer();
                         createDrives(io, objectServer, bus);
                     }
                 }
