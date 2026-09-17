@@ -305,9 +305,6 @@ static void handleEmEndpoints(
 #endif
     }
 
-    // wait for worker ready to handle NVMe-MI commands.
-    std::this_thread::sleep_for(std::chrono::seconds(2));
-
     // Continue with drive initialization
     auto& driveMap = getDriveMap();
     for (const auto& [_, context] : driveMap)
@@ -1286,8 +1283,8 @@ int main(int argc, char* argv[])
         });
         matches.emplace_back(std::move(connectivityMatch));
 
-        // Monitor boot progress for cold-removal detection
-        // Wait for OSRunning state or configured timeout
+        // Delay cold-removal detection after the host starts so MCTP
+        // endpoint discovery has time to complete.
         auto bootProgressTimer =
             std::make_shared<boost::asio::steady_timer>(io);
         auto hostStateRetryTimer =
@@ -1312,7 +1309,7 @@ int main(int argc, char* argv[])
                 if (!getColdRemovalCheckComplete())
                 {
                     lg2::info(
-                        "Boot progress timeout ({TIMEOUT} seconds), checking for cold-removed drives",
+                        "Cold-removal delay elapsed ({TIMEOUT} seconds), checking for cold-removed drives",
                         "TIMEOUT", bootProgressTimeout);
                     checkForColdRemovedDrives(bus);
                 }
@@ -1335,52 +1332,6 @@ int main(int argc, char* argv[])
                     "Host is not running at NVMe manager startup; boot progress timer will be armed on host power-on");
             }
         });
-
-        auto bootProgressMatch = std::make_unique<sdbusplus::bus::match_t>(
-            static_cast<sdbusplus::bus_t&>(*bus),
-            "type='signal',interface='org.freedesktop.DBus.Properties',"
-            "member='PropertiesChanged',"
-            "path='/xyz/openbmc_project/state/host0',"
-            "arg0='xyz.openbmc_project.State.Boot.Progress'",
-            [bus, bootProgressTimer](sdbusplus::message::message& msg) {
-            if (getColdRemovalCheckComplete())
-            {
-                return; // Already checked
-            }
-
-            std::string interfaceName;
-            std::map<std::string, std::variant<std::string>> changedProperties;
-
-            try
-            {
-                msg.read(interfaceName, changedProperties);
-
-                auto it = changedProperties.find("BootProgress");
-                if (it != changedProperties.end())
-                {
-                    std::string bootProgress =
-                        std::get<std::string>(it->second);
-                    lg2::info("Boot progress changed to: {PROGRESS}",
-                              "PROGRESS", bootProgress);
-
-                    // Check if OSRunning state reached
-                    // xyz.openbmc_project.State.Boot.Progress.ProgressStages.OSRunning
-                    if (bootProgress.find("OSRunning") != std::string::npos)
-                    {
-                        lg2::info(
-                            "OS running state reached, checking for cold-removed drives");
-                        bootProgressTimer->cancel();
-                        checkForColdRemovedDrives(bus);
-                    }
-                }
-            }
-            catch (const std::exception& e)
-            {
-                lg2::error("Error processing boot progress change: {ERR}",
-                           "ERR", e.what());
-            }
-        });
-        matches.emplace_back(std::move(bootProgressMatch));
 
         // Monitor host power state to clean up drives on power-off
         // NVMe drives are power-on devices and must be reinitialized after
