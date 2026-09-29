@@ -57,7 +57,7 @@ option(
     'boot_progress_timeout',
     type: 'integer',
     value: 300,
-    description: 'Timeout in seconds to wait for OSRunning boot progress before checking for cold-removed drives (default: 300 seconds / 5 minutes)',
+    description: 'Delay after host running before checking for cold-removed drives (default: 300 seconds / 5 minutes)',
 )
 option(
     'fw_update_progress_timeout',
