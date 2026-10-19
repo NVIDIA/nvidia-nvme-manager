@@ -26,6 +26,10 @@ NVMeMiSensor::NVMeMiSensor(sdbusplus::asio::object_server& objectServer,
                            std::vector<thresholds::Threshold>&& thresholdsIn,
                            const std::string& sensorConfiguration,
                            const uint8_t eid) :
+    SensorArea(static_cast<sdbusplus::bus_t&>(*conn),
+               ("/xyz/openbmc_project/sensors/temperature/" +
+                escapePathForDbus(sensorName))
+                   .c_str()),
     thresholds(std::move(thresholdsIn)), eid(eid),
     name(escapePathForDbus(sensorName)), configurationPath(sensorConfiguration),
     configInterface(configInterfaceName(NVMeMiSensor::sensorType)),
@@ -42,6 +46,9 @@ NVMeMiSensor::NVMeMiSensor(sdbusplus::asio::object_server& objectServer,
     std::string sensorPath = "/xyz/openbmc_project/sensors/temperature/" + name;
     sensorInterface =
         objServer.add_interface(sensorPath, "xyz.openbmc_project.Sensor.Value");
+
+    SensorArea::physicalContext(SensorArea::PhysicalContextType::StorageDevice,
+                                true);
 
     association = objServer.add_interface(
         sensorPath, nvme::sensors::association::interface);
@@ -94,10 +101,12 @@ NVMeMiSensor::NVMeMiSensor(sdbusplus::asio::object_server& objectServer,
         sensorPath, "xyz.openbmc_project.State.Decorator.OperationalStatus");
     operationalInterface->register_property("Functional", true);
     operationalInterface->initialize();
+    SensorArea::emit_added();
 }
 
 NVMeMiSensor::~NVMeMiSensor()
 {
+    SensorArea::emit_removed();
     for (const auto& iface : thresholdInterfaces)
     {
         if (iface)
