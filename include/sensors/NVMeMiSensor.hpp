@@ -10,6 +10,7 @@
 #include <boost/asio/io_context.hpp>
 #include <sdbusplus/asio/connection.hpp>
 #include <sdbusplus/asio/object_server.hpp>
+#include <xyz/openbmc_project/Inventory/Decorator/Area/server.hpp>
 
 #include <array>
 #include <cmath>
@@ -21,7 +22,10 @@
 
 constexpr size_t sensorErrorThreshold = 5;
 
-class NVMeMiSensor
+using SensorArea =
+    sdbusplus::server::xyz::openbmc_project::inventory::decorator::Area;
+
+class NVMeMiSensor : public SensorArea
 {
   public:
     static constexpr const char* sensorType = "NVME1000";
@@ -31,7 +35,7 @@ class NVMeMiSensor
                  const std::string& sensorName,
                  std::vector<thresholds::Threshold>&& thresholds,
                  const std::string& sensorConfiguration, uint8_t eid);
-    ~NVMeMiSensor();
+    ~NVMeMiSensor() override;
     NVMeMiSensor(const NVMeMiSensor&) = delete;
     NVMeMiSensor& operator=(const NVMeMiSensor&) = delete;
     NVMeMiSensor(NVMeMiSensor&&) = delete;
