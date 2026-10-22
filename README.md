@@ -86,7 +86,6 @@ Configure build options using `-D<option>=<value>`:
 | Option                    | Type    | Default            | Description |
 | ------------------------- | ------- | ------------------ | ----------- |
 | `platform_drive_location` | string  | `.../Baseboard_0`  | Location    |
-| `platform_drive_prefix`   | string  | `NVMe_SSD_`        | Drive name  |
 | `drive_sanitize_time`     | integer | 30                 | Sanitize    |
 | `identify_rsp_length`     | integer | 384                | Identify    |
 | `inkernel_mctp`           | boolean | false              | In-kernel   |
