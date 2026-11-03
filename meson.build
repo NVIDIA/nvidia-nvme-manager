@@ -21,9 +21,6 @@ firmware_inventory = get_option('firmware_inventory')
 # Get the NVMe-MI sensors option
 nvme_mi_sensors = get_option('nvme_mi_sensors')
 
-# Get the platform drive prefix
-platform_drive_prefix = get_option('platform_drive_prefix')
-
 add_project_arguments(
     '-Wno-psabi',
     '-Wuninitialized',
@@ -52,12 +49,6 @@ endif
 if nvme_mi_sensors
     add_project_arguments('-DNVME_MI_SENSORS', language: 'cpp')
 endif
-
-# Add PLATFORM_DRIVE_PREFIX define
-add_project_arguments(
-    '-DPLATFORM_DRIVE_PREFIX="' + platform_drive_prefix + '"',
-    language: 'cpp',
-)
 
 cpp = meson.get_compiler('cpp')
 
