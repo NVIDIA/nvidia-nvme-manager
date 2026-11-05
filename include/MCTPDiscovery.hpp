@@ -132,6 +132,14 @@ struct GetObjects : std::enable_shared_from_this<GetObjects>
             retries = 5;
         }
 
+        // Mapper matches any requested interface, while the callback below
+        // requires all of them. Use one required interface to limit candidates.
+        std::vector<std::string> lookupInterfaces;
+        if (!interfaces.empty())
+        {
+            lookupInterfaces.push_back(interfaces.front());
+        }
+
         std::shared_ptr<GetObjects> self = shared_from_this();
         dbusConnection->async_method_call(
             [self, interfaces, retries](const boost::system::error_code ec,
@@ -197,7 +205,7 @@ struct GetObjects : std::enable_shared_from_this<GetObjects>
             }
         },
             mapper::busName, mapper::path, mapper::interface, mapper::subtree,
-            "/", 0, interfaces);
+            "/", 0, lookupInterfaces);
     }
 
     ~GetObjects()
