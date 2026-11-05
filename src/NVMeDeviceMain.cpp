@@ -325,8 +325,8 @@ static void collectInventory(
                           pendingEndpoints);
     });
     inventoryGetter->getConfiguration(std::vector<std::string>{
-        "xyz.openbmc_project.Inventory.Item.Drive",
         "xyz.openbmc_project.Inventory.Item.NVMe",
+        "xyz.openbmc_project.Inventory.Item.Drive",
 #ifdef INKERNEL_MCTP
         "xyz.openbmc_project.MCTP.Endpoint",
 #else
