@@ -52,7 +52,7 @@ NVMeMiSensor::NVMeMiSensor(sdbusplus::asio::object_server& objectServer,
 
     association = objServer.add_interface(
         sensorPath, nvme::sensors::association::interface);
-    createAssociation(association, configurationPath);
+    createAssociation(association, configurationPath, conn);
 
     sensorInterface->register_property("Unit", unitDegreesC);
     sensorInterface->register_property("MaxValue", maxValue);

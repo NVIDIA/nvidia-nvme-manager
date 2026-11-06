@@ -36,8 +36,9 @@ NVMeMiStatusSensor::NVMeMiStatusSensor(
 
     fs::path p(sensorConfiguration);
     nvme::sensors::AssociationList assocs = {};
-    assocs.emplace_back(
-        std::make_tuple("chassis", "all_sensors", p.parent_path().string()));
+    assocs.emplace_back(std::make_tuple(
+        "chassis", "all_sensors",
+        nvme::sensors::resolveChassisPath(conn, p.parent_path().string())));
     sdbusplus::xyz::openbmc_project::Association::server::Definitions::
         associations(assocs);
 
