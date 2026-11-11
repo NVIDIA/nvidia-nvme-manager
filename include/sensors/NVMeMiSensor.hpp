@@ -57,6 +57,10 @@ class NVMeMiSensor : public SensorArea
     static std::string propertyAlarm(thresholds::Level lev,
                                      thresholds::Direction dir);
 
+    /** Point the chassis association at the chassis entity-manager published
+     *  after the sensor was created. No-op once the chassis is resolved. */
+    void refreshAssociation();
+
     void updateValue(double newValue);
     void incrementError();
     bool inError() const;
@@ -73,6 +77,8 @@ class NVMeMiSensor : public SensorArea
 
     std::string name;
     std::string configurationPath;
+    std::string chassisPath;
+    bool chassisResolved{false};
     std::string configInterface;
     double value = std::numeric_limits<double>::quiet_NaN();
     static constexpr double maxReading = 127;

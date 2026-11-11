@@ -45,11 +45,17 @@ class NVMeMiStatusSensor :
 
     void updateStatus(bool present, bool functional, bool fault);
 
+    /** Point the chassis association at the chassis entity-manager published
+     *  after the sensor was created. No-op once the chassis is resolved. */
+    void refreshAssociation();
+
     const uint8_t eid;
     std::string name;
     std::string configurationPath;
 
   private:
+    std::shared_ptr<sdbusplus::asio::connection> dbusConnection;
+    bool chassisResolved{false};
     sdbusplus::asio::object_server& objServer;
     std::shared_ptr<sdbusplus::asio::dbus_interface> driveInterface;
 };

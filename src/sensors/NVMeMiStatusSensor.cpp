@@ -26,7 +26,7 @@ NVMeMiStatusSensor::NVMeMiStatusSensor(
             .c_str(),
         StatusInterface::action::defer_emit),
     eid(eid), name(sensorName), configurationPath(sensorConfiguration),
-    objServer(objectServer)
+    dbusConnection(conn), objServer(objectServer)
 {
     std::string path = "/xyz/openbmc_project/sensors/drive/" +
                        escapeName(sensorName);
@@ -36,9 +36,15 @@ NVMeMiStatusSensor::NVMeMiStatusSensor(
 
     fs::path p(sensorConfiguration);
     nvme::sensors::AssociationList assocs = {};
-    assocs.emplace_back(std::make_tuple(
-        "chassis", "all_sensors",
-        nvme::sensors::resolveChassisPath(conn, p.parent_path().string())));
+    std::string chassisPath = p.parent_path().string();
+    if (auto resolved =
+            nvme::sensors::tryResolveChassisPath(conn, chassisPath))
+    {
+        chassisPath = *resolved;
+        chassisResolved = true;
+    }
+    assocs.emplace_back(
+        std::make_tuple("chassis", "all_sensors", chassisPath));
     sdbusplus::xyz::openbmc_project::Association::server::Definitions::
         associations(assocs);
 
@@ -56,6 +62,27 @@ NVMeMiStatusSensor::NVMeMiStatusSensor(
                 OperationalStatus::StateType::None);
 
     emit_object_added();
+}
+
+void NVMeMiStatusSensor::refreshAssociation()
+{
+    if (chassisResolved)
+    {
+        return;
+    }
+    auto resolved = nvme::sensors::tryResolveChassisPath(
+        dbusConnection, fs::path(configurationPath).parent_path().string());
+    if (!resolved)
+    {
+        return;
+    }
+    chassisResolved = true;
+    nvme::sensors::AssociationList assocs;
+    assocs.emplace_back(std::make_tuple("chassis", "all_sensors", *resolved));
+    sdbusplus::xyz::openbmc_project::Association::server::Definitions::
+        associations(assocs);
+    lg2::info("Sensor {NAME} now associated with chassis {CHASSIS}", "NAME",
+              name, "CHASSIS", *resolved);
 }
 
 NVMeMiStatusSensor::~NVMeMiStatusSensor()

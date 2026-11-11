@@ -15,6 +15,7 @@
 #include <sdbusplus/message/native_types.hpp>
 
 #include <filesystem>
+#include <optional>
 #include <regex>
 #include <tuple>
 #include <variant>
@@ -61,13 +62,13 @@ inline std::string escapePathForDbus(const std::string& name)
  * under the IO board for EnvironmentMetrics. Falls back to the parent path when
  * no such association exists.
  */
-inline std::string resolveChassisPath(
+inline std::optional<std::string> tryResolveChassisPath(
     const std::shared_ptr<sdbusplus::asio::connection>& conn,
     const std::string& parentPath)
 {
     if (!conn)
     {
-        return parentPath;
+        return std::nullopt;
     }
     try
     {
@@ -87,9 +88,33 @@ inline std::string resolveChassisPath(
     }
     catch (const std::exception&)
     {
-        // No chassis association on the parent; fall back to the parent itself.
+        // The chassis association is not on D-Bus (yet).
     }
-    return parentPath;
+    return std::nullopt;
+}
+
+/** @brief The chassis path of a sensor, or the parent path when the
+ *  association is not on D-Bus yet. Callers that need to know whether the
+ *  association was found use tryResolveChassisPath() and call it again later:
+ *  entity-manager may publish the chassis after the sensor is created. */
+inline std::string resolveChassisPath(
+    const std::shared_ptr<sdbusplus::asio::connection>& conn,
+    const std::string& parentPath)
+{
+    return tryResolveChassisPath(conn, parentPath).value_or(parentPath);
+}
+
+inline void createAssociationTo(
+    std::shared_ptr<sdbusplus::asio::dbus_interface>& association,
+    const std::string& chassisPath)
+{
+    if (association)
+    {
+        std::vector<Association> associations;
+        associations.emplace_back("chassis", "all_sensors", chassisPath);
+        association->register_property("Associations", associations);
+        association->initialize();
+    }
 }
 
 inline void createAssociation(
@@ -97,16 +122,9 @@ inline void createAssociation(
     const std::string& path,
     const std::shared_ptr<sdbusplus::asio::connection>& conn)
 {
-    if (association)
-    {
-        std::filesystem::path p(path);
-        std::string chassisPath =
-            resolveChassisPath(conn, p.parent_path().string());
-        std::vector<Association> associations;
-        associations.emplace_back("chassis", "all_sensors", chassisPath);
-        association->register_property("Associations", associations);
-        association->initialize();
-    }
+    std::filesystem::path p(path);
+    createAssociationTo(association,
+                        resolveChassisPath(conn, p.parent_path().string()));
 }
 
 constexpr const char* configInterfacePrefix =
