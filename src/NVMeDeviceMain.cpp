@@ -328,7 +328,7 @@ static void collectInventory(
         handleEmEndpoints(io, objectServer, dbusConnection, nvmeInventory,
                           pendingEndpoints);
     });
-    inventoryGetter->getConfiguration(std::vector<std::string>{
+    const std::vector<std::string> required{
         "xyz.openbmc_project.Inventory.Item.NVMe",
         "xyz.openbmc_project.Inventory.Item.Drive",
 #ifdef INKERNEL_MCTP
@@ -338,10 +338,14 @@ static void collectInventory(
 #endif
         "xyz.openbmc_project.Inventory.Decorator.LocationCode",
         "xyz.openbmc_project.Inventory.Decorator.Location",
-        // Association.Definitions is optional: entity-manager adds it after the
-        // drive object when the associated board is posted later, and the drive
-        // must not be dropped until then. It is read below when present.
-    });
+    };
+    // Optional: entity-manager adds Association.Definitions after the drive
+    // object when the associated board is posted later, so the drive must not
+    // be dropped until then; it is read when present.
+    const std::vector<std::string> optional{
+        "xyz.openbmc_project.Association.Definitions",
+    };
+    inventoryGetter->getConfiguration(required, 0, optional);
 }
 
 static void handleMCTPEndpoints(

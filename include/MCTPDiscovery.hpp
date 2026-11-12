@@ -124,8 +124,11 @@ struct GetObjects : std::enable_shared_from_this<GetObjects>
             interface);
     }
 
-    void getConfiguration(const std::vector<std::string>& interfaces,
-                          size_t retries = 0)
+    // interfaces: every one must be on an object for it to be collected.
+    // optionalInterfaces: collected when the object has them, not required.
+    void getConfiguration(
+        const std::vector<std::string>& interfaces, size_t retries = 0,
+        const std::vector<std::string>& optionalInterfaces = {})
     {
         if (retries > 5)
         {
@@ -142,8 +145,8 @@ struct GetObjects : std::enable_shared_from_this<GetObjects>
 
         std::shared_ptr<GetObjects> self = shared_from_this();
         dbusConnection->async_method_call(
-            [self, interfaces, retries](const boost::system::error_code ec,
-                                        const GetSubTreeType& ret) {
+            [self, interfaces, optionalInterfaces, retries](
+                const boost::system::error_code ec, const GetSubTreeType& ret) {
             if (ec)
             {
                 lg2::error("Error calling mapper");
@@ -154,14 +157,15 @@ struct GetObjects : std::enable_shared_from_this<GetObjects>
                 auto timer = std::make_shared<boost::asio::steady_timer>(
                     self->dbusConnection->get_io_context());
                 timer->expires_after(std::chrono::seconds(10));
-                timer->async_wait([self, timer, interfaces,
+                timer->async_wait([self, timer, interfaces, optionalInterfaces,
                                    retries](boost::system::error_code ec) {
                     if (ec)
                     {
                         lg2::error("Timer error");
                         return;
                     }
-                    self->getConfiguration(interfaces, retries - 1);
+                    self->getConfiguration(interfaces, retries - 1,
+                                           optionalInterfaces);
                 });
 
                 return;
@@ -192,11 +196,14 @@ struct GetObjects : std::enable_shared_from_this<GetObjects>
                 }
 
                 // only collect the data in the interfaces the caller
-                // specified.
+                // specified (required or optional).
                 for (const std::string& interface : objDict.begin()->second)
                 {
                     if (std::find(interfaces.begin(), interfaces.end(),
-                                  interface) == interfaces.end())
+                                  interface) == interfaces.end() &&
+                        std::find(optionalInterfaces.begin(),
+                                  optionalInterfaces.end(),
+                                  interface) == optionalInterfaces.end())
                     {
                         continue;
                     }

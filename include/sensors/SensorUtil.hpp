@@ -86,9 +86,11 @@ inline std::optional<std::string> tryResolveChassisPath(
             return eps.front();
         }
     }
-    catch (const std::exception&)
+    catch (const std::exception& e)
     {
         // The chassis association is not on D-Bus (yet).
+        lg2::debug("No chassis association for {PATH}: {ERROR}", "PATH",
+                   parentPath, "ERROR", e.what());
     }
     return std::nullopt;
 }
@@ -97,9 +99,9 @@ inline std::optional<std::string> tryResolveChassisPath(
  *  association is not on D-Bus yet. Callers that need to know whether the
  *  association was found use tryResolveChassisPath() and call it again later:
  *  entity-manager may publish the chassis after the sensor is created. */
-inline std::string resolveChassisPath(
-    const std::shared_ptr<sdbusplus::asio::connection>& conn,
-    const std::string& parentPath)
+inline std::string
+    resolveChassisPath(const std::shared_ptr<sdbusplus::asio::connection>& conn,
+                       const std::string& parentPath)
 {
     return tryResolveChassisPath(conn, parentPath).value_or(parentPath);
 }

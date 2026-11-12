@@ -17,7 +17,6 @@
 #include <string>
 
 using nvme::sensors::configInterfaceName;
-using nvme::sensors::createAssociation;
 using nvme::sensors::escapePathForDbus;
 using nvme::sensors::unitDegreesC;
 
@@ -241,8 +240,8 @@ void NVMeMiSensor::refreshAssociation()
     }
     const std::string parentPath =
         std::filesystem::path(configurationPath).parent_path().string();
-    auto resolved =
-        nvme::sensors::tryResolveChassisPath(dbusConnection, parentPath);
+    auto resolved = nvme::sensors::tryResolveChassisPath(dbusConnection,
+                                                         parentPath);
     if (!resolved)
     {
         return;

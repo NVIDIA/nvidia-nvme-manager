@@ -37,14 +37,12 @@ NVMeMiStatusSensor::NVMeMiStatusSensor(
     fs::path p(sensorConfiguration);
     nvme::sensors::AssociationList assocs = {};
     std::string chassisPath = p.parent_path().string();
-    if (auto resolved =
-            nvme::sensors::tryResolveChassisPath(conn, chassisPath))
+    if (auto resolved = nvme::sensors::tryResolveChassisPath(conn, chassisPath))
     {
         chassisPath = *resolved;
         chassisResolved = true;
     }
-    assocs.emplace_back(
-        std::make_tuple("chassis", "all_sensors", chassisPath));
+    assocs.emplace_back(std::make_tuple("chassis", "all_sensors", chassisPath));
     sdbusplus::xyz::openbmc_project::Association::server::Definitions::
         associations(assocs);
 
