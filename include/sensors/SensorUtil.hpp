@@ -14,8 +14,9 @@
 #include <sdbusplus/message.hpp>
 #include <sdbusplus/message/native_types.hpp>
 
+#include <cerrno>
 #include <filesystem>
-#include <optional>
+#include <functional>
 #include <regex>
 #include <tuple>
 #include <variant>
@@ -50,60 +51,49 @@ inline std::string escapePathForDbus(const std::string& name)
     return std::regex_replace(name, std::regex("[^a-zA-Z0-9_/]+"), "_");
 }
 
-/** @brief Resolve the chassis an NVMe sensor should associate to.
+/** @brief Look up the chassis an NVMe sensor should associate to.
  *
  * The sensor's EM config lives under its inventory parent (e.g.
- * .../inventory/system/nvme/NVMe_E1S_IO0). By default the sensor would
- * associate to that parent. When the parent carries an EM
- * `Associations: {"chassis": "board/IO_Board_n"}` entry (published as a
- * `.../<parent>/chassis` association endpoint), honor that target instead so
- * the sensor shows up under the owning chassis (e.g. IO_Board_n). This lets the
- * NVMe config stay consolidated on the device entity while still surfacing
- * under the IO board for EnvironmentMetrics. Falls back to the parent path when
- * no such association exists.
+ * .../inventory/system/nvme/NVMe_E1S_IO0), which is the sensor's default
+ * chassis. When the parent carries an EM
+ * `Associations: {"chassis": "board/IO_Board_n"}` entry (published by the
+ * mapper as a `<parent>/chassis` association endpoint), the sensor belongs
+ * under that board instead, so it shows up in the board's
+ * EnvironmentMetrics.
+ *
+ * Asynchronous: calls onFound with the board path once the mapper answers.
+ * onFound is not called while the association is not on D-Bus (yet);
+ * entity-manager may publish the board after the sensor is created.
  */
-inline std::optional<std::string> tryResolveChassisPath(
-    const std::shared_ptr<sdbusplus::asio::connection>& conn,
-    const std::string& parentPath)
-{
-    if (!conn)
-    {
-        return std::nullopt;
-    }
-    try
-    {
-        auto method = conn->new_method_call(
-            mapper::busName, (parentPath + "/chassis").c_str(),
-            "org.freedesktop.DBus.Properties", "Get");
-        method.append(std::string("xyz.openbmc_project.Association"),
-                      std::string("endpoints"));
-        auto reply = conn->call(method);
-        std::variant<std::vector<std::string>> endpoints;
-        reply.read(endpoints);
-        const auto& eps = std::get<std::vector<std::string>>(endpoints);
-        if (!eps.empty())
-        {
-            return eps.front();
-        }
-    }
-    catch (const std::exception& e)
-    {
-        // The chassis association is not on D-Bus (yet).
-        lg2::debug("No chassis association for {PATH}: {ERROR}", "PATH",
-                   parentPath, "ERROR", e.what());
-    }
-    return std::nullopt;
-}
-
-/** @brief The chassis path of a sensor, or the parent path when the
- *  association is not on D-Bus yet. Callers that need to know whether the
- *  association was found use tryResolveChassisPath() and call it again later:
- *  entity-manager may publish the chassis after the sensor is created. */
-inline std::string
+inline void
     resolveChassisPath(const std::shared_ptr<sdbusplus::asio::connection>& conn,
-                       const std::string& parentPath)
+                       const std::string& parentPath,
+                       std::function<void(const std::string&)> onFound)
 {
-    return tryResolveChassisPath(conn, parentPath).value_or(parentPath);
+    conn->async_method_call(
+        [parentPath, onFound = std::move(onFound)](
+            const boost::system::error_code& ec,
+            const std::variant<std::vector<std::string>>& endpoints) {
+        if (ec)
+        {
+            // EBADR: the mapper has no <parent>/chassis object yet
+            if (ec.value() != EBADR)
+            {
+                lg2::error("Chassis association lookup for {PATH} failed: "
+                           "{ERROR}",
+                           "PATH", parentPath, "ERROR", ec.message());
+            }
+            return;
+        }
+        const auto* eps = std::get_if<std::vector<std::string>>(&endpoints);
+        if (eps != nullptr && !eps->empty())
+        {
+            onFound(eps->front());
+        }
+    },
+        mapper::busName, parentPath + "/chassis",
+        "org.freedesktop.DBus.Properties", "Get",
+        "xyz.openbmc_project.Association", "endpoints");
 }
 
 inline void createAssociationTo(
@@ -117,16 +107,6 @@ inline void createAssociationTo(
         association->register_property("Associations", associations);
         association->initialize();
     }
-}
-
-inline void createAssociation(
-    std::shared_ptr<sdbusplus::asio::dbus_interface>& association,
-    const std::string& path,
-    const std::shared_ptr<sdbusplus::asio::connection>& conn)
-{
-    std::filesystem::path p(path);
-    createAssociationTo(association,
-                        resolveChassisPath(conn, p.parent_path().string()));
 }
 
 constexpr const char* configInterfacePrefix =

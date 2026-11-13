@@ -274,11 +274,13 @@ void NVMeMiSensorManager::createSensorsWithConfig(
                 objectServer, conn, cfg.sensorName,
                 std::vector<thresholds::Threshold>(cfg.thresholds),
                 cfg.interfacePath, eid);
+            ctx->tempSensor->refreshAssociation();
         }
         else
         {
             ctx->statusSensor = std::make_shared<NVMeMiStatusSensor>(
                 objectServer, conn, cfg.sensorName, cfg.interfacePath, eid);
+            ctx->statusSensor->refreshAssociation();
         }
     }
 
