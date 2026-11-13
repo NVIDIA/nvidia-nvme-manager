@@ -21,12 +21,14 @@
 #include <fstream>
 #include <functional>
 #include <iostream>
+#include <memory>
 #include <optional>
 #include <regex>
 #include <set>
 #include <span>
 #include <sstream>
 #include <string_view>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -44,17 +46,35 @@ const constexpr char* mctpEpsPath = "/au/com/codeconstruct/mctp1";
 const constexpr char* mctpEpsPath = "/xyz/openbmc_project/mctp";
 #endif
 
+struct NVMeState
+{
+    boost::asio::io_context io;
+    std::shared_ptr<sdbusplus::asio::connection> bus =
+        std::make_shared<sdbusplus::asio::connection>(io);
+    sdbusplus::asio::object_server objectServer{bus, true};
+
+    // Destroy drives and sensors before their object server.
+#ifdef NVME_MI_SENSORS
+    std::unique_ptr<NVMeMiSensorManager> sensorManager;
+#endif
+    std::unordered_map<uint8_t, std::shared_ptr<NVMeDevice>> driveMap;
+};
+
+static NVMeState& getNVMeState()
+{
+    static NVMeState state;
+    return state;
+}
+
 std::unordered_map<uint8_t, std::shared_ptr<NVMeDevice>>& getDriveMap()
 {
-    static std::unordered_map<uint8_t, std::shared_ptr<NVMeDevice>> driveMap{};
-    return driveMap;
+    return getNVMeState().driveMap;
 }
 
 #ifdef NVME_MI_SENSORS
 static std::unique_ptr<NVMeMiSensorManager>& getSensorManager()
 {
-    static std::unique_ptr<NVMeMiSensorManager> sensorManager;
-    return sensorManager;
+    return getNVMeState().sensorManager;
 }
 #endif
 
@@ -1131,9 +1151,11 @@ int main(int argc, char* argv[])
 
     try
     {
-        boost::asio::io_context io;
-        auto bus = std::make_shared<sdbusplus::asio::connection>(io);
-        sdbusplus::asio::object_server objectServer(bus, true);
+        auto& state = getNVMeState();
+        auto& io = state.io;
+        auto& bus = state.bus;
+        auto& objectServer = state.objectServer;
+
         objectServer.add_manager("/xyz/openbmc_project/inventory/system/nvme");
         objectServer.add_manager("/xyz/openbmc_project/sensors");
 #ifdef FIRMWARE_INVENTORY
