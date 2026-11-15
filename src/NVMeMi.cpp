@@ -354,7 +354,7 @@ void NVMeMi::miSubsystemHealthStatusPoll(
 
     try
     {
-        post([self{shared_from_this()}, cb{std::move(cb)}]() {
+        post([self{shared_from_this()}, cb{cb}]() {
             nvme_mi_nvm_ss_health_status ssHealth{};
             auto rc = nvme_mi_mi_subsystem_health_status_poll(self->nvmeEP,
                                                               true, &ssHealth);
@@ -418,7 +418,7 @@ void NVMeMi::miScanCtrl(std::function<void(const std::error_code&,
 
     try
     {
-        post([self{shared_from_this()}, cb{std::move(cb)}]() {
+        post([self{shared_from_this()}, cb{cb}]() {
             int rc = nvme_mi_scan_ep(self->nvmeEP, true);
 
             if (rc < 0)
@@ -494,7 +494,7 @@ void NVMeMi::miVpdRead(
 
     try
     {
-        post([self{shared_from_this()}, offset, length, cb{std::move(cb)}]() {
+        post([self{shared_from_this()}, offset, length, cb{cb}]() {
             nvme_mi_mi_req_hdr request{};
             request.opcode = nvmeMiVpdReadOpcode;
             request.cdw0 =
@@ -603,8 +603,7 @@ void NVMeMi::adminIdentifyFull(
 {
     try
     {
-        post([eid, cns, nsid, cntid, self{shared_from_this()},
-              cb{std::move(cb)}]() {
+        post([eid, cns, nsid, cntid, self{shared_from_this()}, cb{cb}]() {
             nvme_mi_ctrl_t ctrl = self->getController(eid);
             if (ctrl == nullptr)
             {
@@ -685,7 +684,7 @@ void NVMeMi::adminIdentifyPartial(
     try
     {
         post([eid, cns, nsid, cntid, readLength, self{shared_from_this()},
-              cb{std::move(cb)}]() {
+              cb{cb}]() {
             nvme_mi_ctrl_t ctrl = self->getController(eid);
             if (ctrl == nullptr)
             {
@@ -835,7 +834,7 @@ void NVMeMi::adminSanitize(
     try
     {
         post([eid, sanact, owpass, owpattern, sanicap, self{shared_from_this()},
-              cb{std::move(cb)}]() {
+              cb{cb}]() {
             nvme_mi_ctrl_t ctrl = self->getController(eid);
             if (ctrl == nullptr)
             {
@@ -937,8 +936,7 @@ void NVMeMi::adminGetLogPage(
 
     try
     {
-        post([eid, lid, nsid, lsp, self{shared_from_this()},
-              cb{std::move(cb)}]() {
+        post([eid, lid, nsid, lsp, self{shared_from_this()}, cb{cb}]() {
             nvme_mi_ctrl_t ctrl = self->getController(eid);
             if (ctrl == nullptr)
             {
@@ -1237,7 +1235,7 @@ void NVMeMi::adminXfer(
         std::copy(data.begin(), data.end(),
                   req.begin() + sizeof(nvme_mi_admin_req_hdr));
         post([eid, req{std::move(req)}, self{shared_from_this()}, timeoutMs,
-              cb{std::move(cb)}]() mutable {
+              cb{cb}]() mutable {
             nvme_mi_ctrl_t ctrl = self->getController(eid);
             if (ctrl == nullptr)
             {
