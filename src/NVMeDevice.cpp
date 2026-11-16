@@ -57,6 +57,8 @@ NVMeDevice::NVMeDevice(boost::asio::io_context& io,
 
     // assume the drive is good and update Dbus properties at the first place.
     markFunctional(true);
+    Progress::status(OperationStatus::Completed, true);
+    Progress::progress(100, true);
 
     nvmeIntf = NVMeIntf::create<NVMeMi>(io, conn, addr, net, eid);
     intf = std::get<std::shared_ptr<NVMeMiIntf>>(nvmeIntf.getInferface());
@@ -565,6 +567,8 @@ void NVMeDevice::markStatus(const std::string& status)
         Health::health(HealthType::OK, true);
     }
 
+    // Preserve the chassis link when rebuilding health associations; Redfish
+    // ComponentIntegrity uses it to locate the drive and its trusted component.
     if (!driveAssociation.empty())
     {
         assocs.emplace_back("chassis", "drive", driveAssociation.c_str());
@@ -573,6 +577,7 @@ void NVMeDevice::markStatus(const std::string& status)
     {
         assocs.emplace_back("chassis", "drive", driveLocation);
     }
+    assocs.emplace_back("inventory", "associated_ROT", objPath.c_str());
     Associations::associations(assocs);
 }
 

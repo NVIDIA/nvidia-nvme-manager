@@ -65,6 +65,7 @@ Exposes the following OpenBMC D-Bus interfaces:
 - Boost.Asio
 - nlohmann-json
 - systemd
+- When SPDM is enabled: libspdmcpp_responder (with its requester dependency), mbedcrypto, and mbedx509
 
 ### Build Instructions
 
@@ -90,6 +91,8 @@ Configure build options using `-D<option>=<value>`:
 | `identify_rsp_length`     | integer | 384                | Identify    |
 | `inkernel_mctp`           | boolean | false              | In-kernel   |
 | `firmware_inventory`      | boolean | false              | FW inv      |
+| `spdm`                    | feature | disabled           | SPDM        |
+| `spdm_resource_prefix`    | string  | `IRoT_`            | SPDM prefix |
 | `drive_state_file`        | string  | `/var/lib/nvidia-` | State file  |
 |                           |         | `nvme-manager/...` |             |
 
