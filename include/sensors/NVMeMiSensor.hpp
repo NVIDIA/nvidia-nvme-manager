@@ -25,7 +25,9 @@ constexpr size_t sensorErrorThreshold = 5;
 using SensorArea =
     sdbusplus::server::xyz::openbmc_project::inventory::decorator::Area;
 
-class NVMeMiSensor : public SensorArea
+class NVMeMiSensor :
+    public SensorArea,
+    public std::enable_shared_from_this<NVMeMiSensor>
 {
   public:
     static constexpr const char* sensorType = "NVME1000";
@@ -57,6 +59,10 @@ class NVMeMiSensor : public SensorArea
     static std::string propertyAlarm(thresholds::Level lev,
                                      thresholds::Direction dir);
 
+    /** Point the chassis association at the chassis entity-manager published
+     *  after the sensor was created. No-op once the chassis is resolved. */
+    void refreshAssociation();
+
     void updateValue(double newValue);
     void incrementError();
     bool inError() const;
@@ -73,6 +79,7 @@ class NVMeMiSensor : public SensorArea
 
     std::string name;
     std::string configurationPath;
+    bool chassisResolved{false};
     std::string configInterface;
     double value = std::numeric_limits<double>::quiet_NaN();
     static constexpr double maxReading = 127;

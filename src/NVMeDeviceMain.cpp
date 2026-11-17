@@ -418,6 +418,10 @@ static void handleEmEndpoints(
             auto driveIt = driveMap.find(eid);
             if (driveIt != driveMap.end())
             {
+                // entity-manager adds the drive's association after the drive
+                // when its board is posted later
+                driveIt->second->refreshDriveAssociation(driveAssoc);
+
                 bool wasDegraded = driveIt->second->isConnectivityDegraded();
                 driveIt->second->setConnectivityDegraded(false);
 
@@ -468,7 +472,7 @@ static void collectInventory(
         handleEmEndpoints(io, objectServer, dbusConnection, nvmeInventory,
                           pendingEndpoints);
     });
-    inventoryGetter->getConfiguration(std::vector<std::string>{
+    const std::vector<std::string> required{
         "xyz.openbmc_project.Inventory.Item.NVMe",
         "xyz.openbmc_project.Inventory.Item.Drive",
 #ifdef INKERNEL_MCTP
@@ -478,8 +482,14 @@ static void collectInventory(
 #endif
         "xyz.openbmc_project.Inventory.Decorator.LocationCode",
         "xyz.openbmc_project.Inventory.Decorator.Location",
+    };
+    // Optional: entity-manager adds Association.Definitions after the drive
+    // object when the associated board is posted later, so the drive must not
+    // be dropped until then; it is read when present.
+    const std::vector<std::string> optional{
         "xyz.openbmc_project.Association.Definitions",
-    });
+    };
+    inventoryGetter->getConfiguration(required, 0, optional);
 }
 
 static void handleMCTPEndpoints(
@@ -1395,6 +1405,19 @@ int main(int argc, char* argv[])
             emHandler);
 
         matches.emplace_back(std::move(emIfaceAddedMatch));
+
+        // entity-manager updates the Associations of a drive object when its
+        // board is posted later (the interface already exists, so there is no
+        // InterfacesAdded): rescan to pick the new chassis up.
+        auto emAssocChangedMatch = std::make_unique<sdbusplus::bus::match_t>(
+            static_cast<sdbusplus::bus_t&>(*bus),
+            "type='signal',member='PropertiesChanged',"
+            "interface='org.freedesktop.DBus.Properties',"
+            "arg0='xyz.openbmc_project.Association.Definitions',"
+            "path_namespace='/xyz/openbmc_project/inventory/system/nvme'",
+            emHandler);
+
+        matches.emplace_back(std::move(emAssocChangedMatch));
 
 #ifdef NVME_MI_SENSORS
         // Watch for entity-manager sensor config interfaces appearing under

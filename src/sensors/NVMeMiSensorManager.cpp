@@ -274,11 +274,13 @@ void NVMeMiSensorManager::createSensorsWithConfig(
                 objectServer, conn, cfg.sensorName,
                 std::vector<thresholds::Threshold>(cfg.thresholds),
                 cfg.interfacePath, eid);
+            ctx->tempSensor->refreshAssociation();
         }
         else
         {
             ctx->statusSensor = std::make_shared<NVMeMiStatusSensor>(
                 objectServer, conn, cfg.sensorName, cfg.interfacePath, eid);
+            ctx->statusSensor->refreshAssociation();
         }
     }
 
@@ -383,6 +385,20 @@ void NVMeMiSensorManager::refreshSensors()
     // createSensors() uses the cache when available (instant), or batches
     // EIDs into a single async GetSensorConfiguration call.  It is a no-op
     // for drives that already have sensors, so spurious calls are harmless.
+    // Sensors created before entity-manager published their chassis point at
+    // the drive object; move them to the chassis once it is on D-Bus.
+    for (const auto& [eid, ctx] : sensorContexts)
+    {
+        if (ctx->tempSensor)
+        {
+            ctx->tempSensor->refreshAssociation();
+        }
+        if (ctx->statusSensor)
+        {
+            ctx->statusSensor->refreshAssociation();
+        }
+    }
+
     auto& driveMap = getDriveMap();
     for (const auto& [eid, _] : driveMap)
     {

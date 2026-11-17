@@ -93,6 +93,11 @@ class NVMeDevice :
     void pollDrive();
     void markFunctional(bool functional);
     void markStatus(const std::string& status);
+
+    /** Point the drive's chassis association at the board entity-manager
+     *  published after the drive was created. No-op when it is unchanged or
+     *  empty. */
+    void refreshDriveAssociation(const std::string& newAssociation);
     void generateRedfishEventbySmart(uint8_t sw);
     void updateSanitizeStatus(EraseMethod type);
 
@@ -257,6 +262,7 @@ class NVMeDevice :
     std::unique_ptr<SoftwareInventoryManager> softwareInventoryManager;
 
     AssociationList assocs;
+    std::string healthStatus{"ok"};
     nvme_mi_ctrl_t ctrl{};
     bool initialized{false};
     bool presence{false};

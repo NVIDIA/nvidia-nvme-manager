@@ -12,11 +12,11 @@
 
 #include <chrono>
 #include <cmath>
+#include <filesystem>
 #include <limits>
 #include <string>
 
 using nvme::sensors::configInterfaceName;
-using nvme::sensors::createAssociation;
 using nvme::sensors::escapePathForDbus;
 using nvme::sensors::unitDegreesC;
 
@@ -52,7 +52,10 @@ NVMeMiSensor::NVMeMiSensor(sdbusplus::asio::object_server& objectServer,
 
     association = objServer.add_interface(
         sensorPath, nvme::sensors::association::interface);
-    createAssociation(association, configurationPath);
+    // the chassis is looked up by refreshAssociation()
+    nvme::sensors::createAssociationTo(
+        association,
+        std::filesystem::path(configurationPath).parent_path().string());
 
     sensorInterface->register_property("Unit", unitDegreesC);
     sensorInterface->register_property("MaxValue", maxValue);
@@ -222,6 +225,30 @@ void NVMeMiSensor::updateValue(double newValue)
         markFunctional(true);
         markAvailable(true);
     }
+}
+
+void NVMeMiSensor::refreshAssociation()
+{
+    if (chassisResolved || !association)
+    {
+        return;
+    }
+    nvme::sensors::resolveChassisPath(
+        dbusConnection,
+        std::filesystem::path(configurationPath).parent_path().string(),
+        [weak = weak_from_this()](const std::string& chassisPath) {
+        auto self = weak.lock();
+        if (!self || self->chassisResolved)
+        {
+            return;
+        }
+        self->chassisResolved = true;
+        nvme::sensors::AssociationList associations;
+        associations.emplace_back("chassis", "all_sensors", chassisPath);
+        self->association->set_property("Associations", associations);
+        lg2::info("Sensor {NAME} associated with chassis {CHASSIS}", "NAME",
+                  self->name, "CHASSIS", chassisPath);
+    });
 }
 
 void NVMeMiSensor::incrementError()

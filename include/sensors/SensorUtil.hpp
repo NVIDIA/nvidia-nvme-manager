@@ -14,9 +14,12 @@
 #include <sdbusplus/message.hpp>
 #include <sdbusplus/message/native_types.hpp>
 
+#include <cerrno>
 #include <filesystem>
+#include <functional>
 #include <regex>
 #include <tuple>
+#include <variant>
 #include <vector>
 
 namespace nvme
@@ -48,16 +51,59 @@ inline std::string escapePathForDbus(const std::string& name)
     return std::regex_replace(name, std::regex("[^a-zA-Z0-9_/]+"), "_");
 }
 
-inline void createAssociation(
+/** @brief Look up the chassis an NVMe sensor should associate to.
+ *
+ * The sensor's EM config lives under its inventory parent (e.g.
+ * .../inventory/system/nvme/NVMe_E1S_IO0), which is the sensor's default
+ * chassis. When the parent carries an EM
+ * `Associations: {"chassis": "board/IO_Board_n"}` entry (published by the
+ * mapper as a `<parent>/chassis` association endpoint), the sensor belongs
+ * under that board instead, so it shows up in the board's
+ * EnvironmentMetrics.
+ *
+ * Asynchronous: calls onFound with the board path once the mapper answers.
+ * onFound is not called while the association is not on D-Bus (yet);
+ * entity-manager may publish the board after the sensor is created.
+ */
+inline void
+    resolveChassisPath(const std::shared_ptr<sdbusplus::asio::connection>& conn,
+                       const std::string& parentPath,
+                       std::function<void(const std::string&)> onFound)
+{
+    conn->async_method_call(
+        [parentPath, onFound = std::move(onFound)](
+            const boost::system::error_code& ec,
+            const std::variant<std::vector<std::string>>& endpoints) {
+        if (ec)
+        {
+            // EBADR: the mapper has no <parent>/chassis object yet
+            if (ec.value() != EBADR)
+            {
+                lg2::error("Chassis association lookup for {PATH} failed: "
+                           "{ERROR}",
+                           "PATH", parentPath, "ERROR", ec.message());
+            }
+            return;
+        }
+        const auto* eps = std::get_if<std::vector<std::string>>(&endpoints);
+        if (eps != nullptr && !eps->empty())
+        {
+            onFound(eps->front());
+        }
+    },
+        mapper::busName, parentPath + "/chassis",
+        "org.freedesktop.DBus.Properties", "Get",
+        "xyz.openbmc_project.Association", "endpoints");
+}
+
+inline void createAssociationTo(
     std::shared_ptr<sdbusplus::asio::dbus_interface>& association,
-    const std::string& path)
+    const std::string& chassisPath)
 {
     if (association)
     {
-        std::filesystem::path p(path);
         std::vector<Association> associations;
-        associations.emplace_back("chassis", "all_sensors",
-                                  p.parent_path().string());
+        associations.emplace_back("chassis", "all_sensors", chassisPath);
         association->register_property("Associations", associations);
         association->initialize();
     }

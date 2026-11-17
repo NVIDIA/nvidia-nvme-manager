@@ -550,6 +550,7 @@ void NVMeDevice::queryController()
 
 void NVMeDevice::markStatus(const std::string& status)
 {
+    healthStatus = status;
     assocs = {};
 
     if (status == "critical")
@@ -579,6 +580,19 @@ void NVMeDevice::markStatus(const std::string& status)
     }
     assocs.emplace_back("inventory", "associated_ROT", objPath.c_str());
     Associations::associations(assocs);
+}
+
+void NVMeDevice::refreshDriveAssociation(const std::string& newAssociation)
+{
+    if (newAssociation.empty() || newAssociation == driveAssociation)
+    {
+        return;
+    }
+    lg2::info("Drive {NAME} chassis association: {OLD} -> {NEW}", "NAME",
+              getDriveName(), "OLD", driveAssociation, "NEW", newAssociation);
+    driveAssociation = newAssociation;
+    // rebuilds the associations (health and chassis) and republishes them
+    markStatus(healthStatus);
 }
 
 void NVMeDevice::markFunctional(bool functional)
