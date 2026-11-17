@@ -36,6 +36,7 @@
 #include <string_view>
 #include <unordered_map>
 #include <utility>
+#include <variant>
 #include <vector>
 
 using Json = nlohmann::json;
@@ -341,21 +342,38 @@ static void handleEmEndpoints(
                 }
             }
         }
-        auto findName = nvmeProps.find("Name");
-        if (findName == nvmeProps.end())
+        const std::string* driveNamePtr = nullptr;
+
+        // Newer entity-manager versions publish Name on Configuration.Probe.
+        auto probe = data.find("xyz.openbmc_project.Configuration.Probe");
+        if (probe != data.end())
         {
-            lg2::warning("Skipping EM NVMe config at {PATH}: missing Name",
-                         "PATH", path.str);
+            auto findName = probe->second.find("Name");
+            if (findName != probe->second.end())
+            {
+                driveNamePtr = std::get_if<std::string>(&findName->second);
+            }
+        }
+
+        // Preserve compatibility with older entity-manager versions.
+        if (driveNamePtr == nullptr || driveNamePtr->empty())
+        {
+            auto findName = nvmeProps.find("Name");
+            if (findName != nvmeProps.end())
+            {
+                driveNamePtr = std::get_if<std::string>(&findName->second);
+            }
+        }
+
+        if (driveNamePtr == nullptr || driveNamePtr->empty())
+        {
+            lg2::warning(
+                "Skipping EM NVMe config at {PATH}: missing or invalid Name",
+                "PATH", path.str);
             continue;
         }
 
-        const std::string& driveName = std::get<std::string>(findName->second);
-        if (driveName.empty())
-        {
-            lg2::warning("Skipping EM NVMe config at {PATH}: empty Name",
-                         "PATH", path.str);
-            continue;
-        }
+        const std::string& driveName = *driveNamePtr;
 
         const PendingMCTPEndpoint* endpoint = nullptr;
         for (const PendingMCTPEndpoint& pendingEndpoint : pendingEndpoints)
@@ -486,8 +504,10 @@ static void collectInventory(
     // Optional: entity-manager adds Association.Definitions after the drive
     // object when the associated board is posted later, so the drive must not
     // be dropped until then; it is read when present.
+    // Configuration.Probe supplies Name on newer entity-manager versions.
     const std::vector<std::string> optional{
         "xyz.openbmc_project.Association.Definitions",
+        "xyz.openbmc_project.Configuration.Probe",
     };
     inventoryGetter->getConfiguration(required, 0, optional);
 }
